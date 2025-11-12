@@ -192,8 +192,16 @@ async function getTorrentFiletree(req: Request, res: Response) {
     const decoded = bencode.decode(torrentData, 'utf8') as any;
 
     const pieceLength = decoded.info['piece length'];
-    //const pieceHashes = Buffer.from(decoded.info.pieces, 'binary');
-    const pieceHashes: Buffer = Buffer.from(decoded.info.pieces as Uint8Array);
+    let pieceHashes: Buffer;
+    if (typeof decoded.info.pieces === 'string') {
+      // If bencode returned a string, use 'latin1' (raw bytes)
+      pieceHashes = Buffer.from(decoded.info.pieces, 'latin1');
+    } else if (decoded.info.pieces instanceof Uint8Array) {
+      // If bencode returned Uint8Array, wrap it
+      pieceHashes = Buffer.from(decoded.info.pieces);
+    } else {
+      throw new Error('Unknown pieces type in torrent');
+    }
 
     const files = decoded.info.files
     ? decoded.info.files.map((f: any) => ({ path: f.path.join('/'), length: f.length }))

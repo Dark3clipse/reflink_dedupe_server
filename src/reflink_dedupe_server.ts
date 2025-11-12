@@ -225,11 +225,8 @@ async function getTorrentFiletree(req: Request, res: Response) {
     : (() => {
       let filePath;
       if (info.name instanceof Uint8Array) {
-        filePath = info.name.toString('utf8');
-        console.log(`[TRACE] path is buffer`);
-      }else if (Array.isArray(info.name)){
         filePath = Buffer.from(info.name).toString('utf8');
-        console.log(`[TRACE] path is array`);
+        console.log(`[TRACE] path is buffer`);
       }else{
         filePath = String(info.name);
         console.log(`[TRACE] path is other`);

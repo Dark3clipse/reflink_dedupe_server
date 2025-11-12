@@ -101,7 +101,20 @@ async function uploadTorrent(req: Request, res: Response) {
 }
 
 async function deleteTorrent(req: Request, res: Response) {
-  res.json({ success: true });
+  const { id } = req.params;
+  const torrentPath = path.join(serverConfig.TMP_DIR, 'torrents', `${id}.torrent`);
+
+  try {
+    if (!fs.existsSync(torrentPath)) {
+      return res.status(404).json({ error: `Torrent with ID ${id} not found` });
+    }
+
+    fs.unlinkSync(torrentPath); // delete the file
+    res.json({ success: true, message: `Torrent ${id} deleted successfully` });
+  } catch (err) {
+    console.error('Failed to delete torrent:', err);
+    res.status(500).json({ error: 'Failed to delete torrent' });
+  }
 }
 
 async function getTorrentMetadata(req: Request, res: Response) {

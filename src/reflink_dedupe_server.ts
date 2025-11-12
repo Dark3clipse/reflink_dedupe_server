@@ -74,6 +74,15 @@ function bufferToString(buf: any): string {
   return String(buf);
 }
 
+function getPieceHashes(info: any): Buffer[] {
+  const pieces: Buffer[] = [];
+  const buffer = Buffer.from(info.pieces, 'binary');
+  for (let i = 0; i < buffer.length; i += 20) {
+    pieces.push(buffer.subarray(i, i + 20));
+  }
+  return pieces;
+}
+
 // --- Token Auth middleware ---
 function authMiddleware(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
@@ -169,7 +178,98 @@ async function getTorrentMetadata(req: Request, res: Response) {
 }
 
 async function getTorrentFiletree(req: Request, res: Response) {
-  res.json([{ path: 'file.txt', size: 123, locations: ['/path/to/file.txt'] }]);
+  const { id } = req.params;
+  const torrentPath = path.join(torrentsDir, `${id}.torrent`);
+
+  try {
+    if (!fs.existsSync(torrentPath)) {
+      console.log(`[TRACE] Torrent file not found: ${torrentPath}`);
+      return res.status(404).json({ error: 'Torrent not found' });
+    }
+
+    console.log(`[TRACE] Loading torrent ${torrentPath}`);
+    const torrentData = fs.readFileSync(torrentPath);
+    const decoded = bencode.decode(torrentData, 'utf8') as any;
+
+    const pieceLength = decoded.info['piece length'];
+    const pieceHashes = Buffer.from(decoded.info.pieces, 'binary');
+
+    const files = decoded.info.files
+    ? decoded.info.files.map((f: any) => ({ path: f.path.join('/'), length: f.length }))
+    : [{ path: decoded.info.name, length: decoded.info.length }];
+
+    const filetree: Array<{ path: string; size: number; locations: string[] }> = [];
+
+    for (const file of files) {
+      console.log(`[TRACE] Processing file: ${file.path} (size: ${file.length})`);
+      let locations: string[] = [];
+
+      if (file.length <= pieceLength) {
+        // Single-piece file: look up SHA-1 directly
+        const hash = pieceHashes.toString('hex'); // single-piece SHA-1
+        const rows = await db.all('SELECT path FROM files WHERE hash = ?', hash);
+        locations = rows.map(r => r.path);
+        console.log(`[TRACE] Single-piece file found in DB: ${locations.join(', ')}`);
+      } else {
+        // Multi-piece file: search by file size first
+        const candidates = await db.all('SELECT path, hash FROM files WHERE file_size = ?', file.length);
+        console.log(`[TRACE] Found ${candidates.length} candidates by size`);
+
+        // Optional: sort candidates by filename similarity
+        const targetName = path.basename(file.path);
+        candidates.sort((a, b) => {
+          const nameA = path.basename(a.path);
+          const nameB = path.basename(b.path);
+          return nameB.includes(targetName) ? 1 : -1;
+        });
+
+        for (const candidate of candidates) {
+          console.log(`[TRACE] Checking candidate: ${candidate.path}`);
+          const fd = fs.openSync(candidate.path, 'r');
+          let pieceMatch = true;
+
+          for (let offset = 0, i = 0; offset < file.length; offset += pieceLength, i++) {
+            const buffer = Buffer.alloc(Math.min(pieceLength, file.length - offset));
+            const readBytes = fs.readSync(fd, buffer, 0, buffer.length, offset);
+            if (readBytes === 0) break;
+
+            const hash = crypto.createHash('sha1').update(buffer.slice(0, readBytes)).digest();
+            const torrentHash = pieceHashes.slice(i * 20, i * 20 + 20);
+
+            if (!hash.equals(torrentHash)) {
+              pieceMatch = false;
+              console.log(`[TRACE] Piece ${i} mismatch for candidate ${candidate.path}`);
+              break;
+            } else {
+              console.log(`[TRACE] Piece ${i} matched for candidate ${candidate.path}`);
+            }
+          }
+
+          fs.closeSync(fd);
+
+          if (pieceMatch) {
+            console.log(`[TRACE] Candidate matched: ${candidate.path}`);
+            locations.push(candidate.path);
+          } else {
+            console.log(`[TRACE] Candidate did not match: ${candidate.path}`);
+          }
+        }
+      }
+
+      console.log(`[TRACE] File ${file.path} has ${locations.length} matching locations`);
+      filetree.push({
+        path: file.path,
+        size: file.length,
+        locations,
+      });
+    }
+
+    console.log(`[TRACE] Filetree completed for torrent ${id}`);
+    res.json(filetree);
+  } catch (err) {
+    console.error('Failed to get torrent filetree:', err);
+    res.status(500).json({ error: 'Failed to get torrent filetree' });
+  }
 }
 
 async function getTorrentLocation(req: Request, res: Response) {

@@ -184,94 +184,102 @@ async function getTorrentMetadata(req: Request, res: Response) {
 }
 
 async function getTorrentFiletree(torrentPath: string, db: Database, dedupRoot: string): Promise<FileTreeEntry[]> {
-  console.log(`[TRACE] Loading torrent ${torrentPath}`);
-  const filetree: FileTreeEntry[] = [];
+  try{
+    const torrentId = req.params.id;
+    const torrentPath = path.join(serverConfig.TMP_DIR, 'torrents', `${torrentId}.torrent`);
 
-  const torrentData = fs.readFileSync(torrentPath);
-  const decoded: any = bencode.decode(torrentData);
+    console.log(`[TRACE] Loading torrent ${torrentPath}`);
+    const filetree: FileTreeEntry[] = [];
 
-  const info = decoded.info;
-  const pieceLength: number = info['piece length'];
-  let pieceHashes: Buffer;
+    const torrentData = fs.readFileSync(torrentPath);
+    const decoded: any = bencode.decode(torrentData);
 
-  // Ensure we get raw bytes
-  if (typeof info.pieces === 'string') {
-    pieceHashes = Buffer.from(info.pieces, 'latin1');
-  } else if (info.pieces instanceof Uint8Array) {
-    pieceHashes = Buffer.from(info.pieces);
-  } else {
-    throw new Error('Unknown pieces type in torrent');
-  }
+    const info = decoded.info;
+    const pieceLength: number = info['piece length'];
+    let pieceHashes: Buffer;
 
-  // Determine if multi-file torrent
-  const files: { path: string; length: number }[] = info.files
-  ? info.files.map((f: any) => ({ path: path.join(...f.path), length: f.length }))
-  : [{ path: info.name.toString(), length: info.length }];
+    // Ensure we get raw bytes
+    if (typeof info.pieces === 'string') {
+      pieceHashes = Buffer.from(info.pieces, 'latin1');
+    } else if (info.pieces instanceof Uint8Array) {
+      pieceHashes = Buffer.from(info.pieces);
+    } else {
+      throw new Error('Unknown pieces type in torrent');
+    }
 
-  let globalOffset = 0; // global byte offset in the torrent
+    // Determine if multi-file torrent
+    const files: { path: string; length: number }[] = info.files
+    ? info.files.map((f: any) => ({ path: path.join(...f.path), length: f.length }))
+    : [{ path: info.name.toString(), length: info.length }];
 
-  for (const f of files) {
-    console.log(`[TRACE] Processing file: ${f.path} (size: ${f.length})`);
-    const locations: string[] = [];
+    let globalOffset = 0; // global byte offset in the torrent
 
-    // 1️⃣ Get candidate files from DB by size
-    const candidates = await db.all('SELECT path FROM files WHERE file_size = ?', f.length);
-    console.log(`[TRACE] Found ${candidates.length} candidates by size`);
+    for (const f of files) {
+      console.log(`[TRACE] Processing file: ${f.path} (size: ${f.length})`);
+      const locations: string[] = [];
 
-    for (const c of candidates) {
-      const candidatePath = path.isAbsolute(c.path) ? c.path : path.join(dedupRoot, c.path);
-      if (!fs.existsSync(candidatePath)) continue;
+      // 1️⃣ Get candidate files from DB by size
+      const candidates = await db.all('SELECT path FROM files WHERE file_size = ?', f.length);
+      console.log(`[TRACE] Found ${candidates.length} candidates by size`);
 
-      console.log(`[TRACE] Checking candidate: ${candidatePath}`);
+      for (const c of candidates) {
+        const candidatePath = path.isAbsolute(c.path) ? c.path : path.join(dedupRoot, c.path);
+        if (!fs.existsSync(candidatePath)) continue;
 
-      const fd = fs.openSync(candidatePath, 'r');
-      const pieceCount = Math.ceil(f.length / pieceLength);
-      let matched = true;
+        console.log(`[TRACE] Checking candidate: ${candidatePath}`);
 
-      for (let i = 0; i < pieceCount; i++) {
-        // Compute offsets for this file within the global piece stream
-        const pieceStartGlobal = globalOffset + i * pieceLength;
-        const pieceEndGlobal = Math.min(pieceStartGlobal + pieceLength, globalOffset + f.length);
-        const readLength = pieceEndGlobal - pieceStartGlobal;
+        const fd = fs.openSync(candidatePath, 'r');
+        const pieceCount = Math.ceil(f.length / pieceLength);
+        let matched = true;
 
-        const buffer = Buffer.alloc(readLength);
-        fs.readSync(fd, buffer, 0, readLength, i * pieceLength);
+        for (let i = 0; i < pieceCount; i++) {
+          // Compute offsets for this file within the global piece stream
+          const pieceStartGlobal = globalOffset + i * pieceLength;
+          const pieceEndGlobal = Math.min(pieceStartGlobal + pieceLength, globalOffset + f.length);
+          const readLength = pieceEndGlobal - pieceStartGlobal;
 
-        const hash = crypto.createHash('sha1').update(buffer).digest();
-        const torrentHash = pieceHashes.slice((Math.floor(pieceStartGlobal / pieceLength)) * 20,
-                                              (Math.floor(pieceStartGlobal / pieceLength)) * 20 + 20);
+          const buffer = Buffer.alloc(readLength);
+          fs.readSync(fd, buffer, 0, readLength, i * pieceLength);
 
-        console.log(`[TRACE] piece hash from torrent: ${torrentHash.toString('hex')}`);
-        console.log(`[TRACE] candidate piece hash: ${hash.toString('hex')}`);
+          const hash = crypto.createHash('sha1').update(buffer).digest();
+          const torrentHash = pieceHashes.slice((Math.floor(pieceStartGlobal / pieceLength)) * 20,
+                                                (Math.floor(pieceStartGlobal / pieceLength)) * 20 + 20);
 
-        if (!hash.equals(torrentHash)) {
-          console.log(`[TRACE] Piece ${i} mismatch for candidate ${candidatePath}`);
-          matched = false;
-          break;
+          console.log(`[TRACE] piece hash from torrent: ${torrentHash.toString('hex')}`);
+          console.log(`[TRACE] candidate piece hash: ${hash.toString('hex')}`);
+
+          if (!hash.equals(torrentHash)) {
+            console.log(`[TRACE] Piece ${i} mismatch for candidate ${candidatePath}`);
+            matched = false;
+            break;
+          }
+        }
+
+        fs.closeSync(fd);
+
+        if (matched) {
+          console.log(`[TRACE] Candidate matched: ${candidatePath}`);
+          locations.push(candidatePath);
+        } else {
+          console.log(`[TRACE] Candidate did not match: ${candidatePath}`);
         }
       }
 
-      fs.closeSync(fd);
+      filetree.push({
+        path: f.path,
+        size: f.length,
+        locations,
+      });
 
-      if (matched) {
-        console.log(`[TRACE] Candidate matched: ${candidatePath}`);
-        locations.push(candidatePath);
-      } else {
-        console.log(`[TRACE] Candidate did not match: ${candidatePath}`);
-      }
+      globalOffset += f.length; // increment global offset
     }
 
-    filetree.push({
-      path: f.path,
-      size: f.length,
-      locations,
-    });
-
-    globalOffset += f.length; // increment global offset
+    console.log(`[TRACE] Filetree completed for torrent ${path.basename(torrentPath)}`);
+    return filetree;
+  }catch (err){
+    console.error('Failed to compute torrent filetree:', err);
+    res.status(500).json({ error: 'Failed to compute torrent filetree' });
   }
-
-  console.log(`[TRACE] Filetree completed for torrent ${path.basename(torrentPath)}`);
-  return filetree;
 }
 
 

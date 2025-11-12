@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import express from 'express';
+import expressPino from 'express-pino-logger';
 import type { Request, Response, NextFunction } from 'express';
 import swaggerUi from 'swagger-ui-express';
 import yaml from 'yaml';
@@ -9,6 +10,7 @@ import { open, Database } from 'sqlite';
 import bencode from 'bencode';
 import crypto from 'crypto';
 import multer from 'multer';
+import { logger } from './logger.ts';
 
 // --- Setup multer storage in TMP_DIR/torrents ---
 let torrentsDir: string;
@@ -185,10 +187,11 @@ async function getTorrentMetadata(req: Request, res: Response) {
 
 async function getTorrentFiletree(req: Request, res: Response) {
   try{
+
     const torrentId = req.params.id;
     const torrentPath = path.join(serverConfig.TMP_DIR, 'torrents', `${torrentId}.torrent`);
 
-    console.log(`[TRACE] Loading torrent ${torrentPath}`);
+    logger.trace(`Loading torrent ${torrentPath}`);
     const filetree: FileTreeEntry[] = [];
 
     const torrentData = fs.readFileSync(torrentPath);
@@ -206,50 +209,48 @@ async function getTorrentFiletree(req: Request, res: Response) {
     } else {
       throw new Error('Unknown pieces type in torrent');
     }
-    console.log(`[TRACE] Torrent piece length: ${pieceLength}, total pieces: ${pieceHashes.length / 20}`);
+    logger.trace(`[TRACE] Torrent piece length: ${pieceLength}, total pieces: ${pieceHashes.length / 20}`);
 
 
     // Determine if multi-file torrent
     const files: { path: string; length: number }[] = info.files
     ? info.files.map((f: any, idx: number) => {
-      console.log(`[TRACE] Decoding multi-file path #${idx}`);
+      logger.trace(`[TRACE] Decoding multi-file path #${idx}`);
       const pathComponents = f.path.map((p: Buffer, compIdx: number) => {
         const str = p.toString('utf8');
-        console.log(`[TRACE] Path component ${compIdx}: ${str}`);
+        logger.trace(`[TRACE] Path component ${compIdx}: ${str}`);
         return str;
       });
       const filePath = pathComponents.join('/');
-      console.log(`[TRACE] Full file path: ${filePath}, length: ${f.length}`);
+      logger.trace(`[TRACE] Full file path: ${filePath}, length: ${f.length}`);
       return { path: filePath, length: f.length };
     })
     : (() => {
       let filePath;
       if (info.name instanceof Uint8Array) {
         filePath = Buffer.from(info.name).toString('utf8');
-        console.log(`[TRACE] path is buffer`);
       }else{
         filePath = String(info.name);
-        console.log(`[TRACE] path is other`);
       }
-      console.log(`[TRACE] Single-file torrent path: ${filePath}, length: ${info.length}`);
+      logger.trace(`[TRACE] Single-file torrent path: ${filePath}, length: ${info.length}`);
       return [{ path: filePath, length: info.length }];
     })();
 
     let globalOffset = 0; // global byte offset in the torrent
 
     for (const f of files) {
-      console.log(`[TRACE] Processing file: ${f.path} (size: ${f.length})`);
+      logger.trace(`[TRACE] Processing file: ${f.path} (size: ${f.length})`);
       const locations: string[] = [];
 
       // 1️⃣ Get candidate files from DB by size
       const candidates = await db.all('SELECT path FROM files WHERE file_size = ?', f.length);
-      console.log(`[TRACE] Found ${candidates.length} candidates by size`);
+      logger.trace(`[TRACE] Found ${candidates.length} candidates by size`);
 
       for (const c of candidates) {
         const candidatePath = path.isAbsolute(c.path) ? c.path : path.join(rdConfig.DEDUPLICATION_ROOT, c.path);
         if (!fs.existsSync(candidatePath)) continue;
 
-        console.log(`[TRACE] Checking candidate: ${candidatePath}`);
+        logger.trace(`[TRACE] Checking candidate: ${candidatePath}`);
 
         const fd = fs.openSync(candidatePath, 'r');
         const pieceCount = Math.ceil(f.length / pieceLength);
@@ -268,11 +269,11 @@ async function getTorrentFiletree(req: Request, res: Response) {
           const torrentHash = pieceHashes.slice((Math.floor(pieceStartGlobal / pieceLength)) * 20,
                                                 (Math.floor(pieceStartGlobal / pieceLength)) * 20 + 20);
 
-          //console.log(`[TRACE] piece hash from torrent: ${torrentHash.toString('hex')}`);
-          //console.log(`[TRACE] candidate piece hash: ${hash.toString('hex')}`);
+          //logger.trace(`[TRACE] piece hash from torrent: ${torrentHash.toString('hex')}`);
+          //logger.trace(`[TRACE] candidate piece hash: ${hash.toString('hex')}`);
 
           if (!hash.equals(torrentHash)) {
-            console.log(`[TRACE] Piece ${i} mismatch for candidate ${candidatePath}`);
+            logger.trace(`[TRACE] Piece ${i} mismatch for candidate ${candidatePath}`);
             matched = false;
             break;
           }
@@ -281,10 +282,10 @@ async function getTorrentFiletree(req: Request, res: Response) {
         fs.closeSync(fd);
 
         if (matched) {
-          console.log(`[TRACE] Candidate matched: ${candidatePath}`);
+          logger.trace(`[TRACE] Candidate matched: ${candidatePath}`);
           locations.push(candidatePath);
         } else {
-          console.log(`[TRACE] Candidate did not match: ${candidatePath}`);
+          logger.trace(`[TRACE] Candidate did not match: ${candidatePath}`);
         }
       }
 
@@ -297,7 +298,7 @@ async function getTorrentFiletree(req: Request, res: Response) {
       globalOffset += f.length; // increment global offset
     }
 
-    console.log(`[TRACE] Filetree completed for torrent ${path.basename(torrentPath)}`);
+    logger.trace(`[TRACE] Filetree completed for torrent ${path.basename(torrentPath)}`);
     res.json(filetree);
   }catch (err){
     console.error('Failed to compute torrent filetree:', err);
@@ -326,6 +327,24 @@ async function createDuplicate(req: Request, res: Response) {
   res.json({ success: true, message: 'Duplicate created (placeholder)' });
 }
 
+export function tracedRoute(fn: Function, name?: string) {
+  return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const routeName = name || fn.name || 'anonymousHandler';
+    req.log.trace({ routeName }, '→ Enter route');
+
+    const start = Date.now();
+    try {
+      await fn(req, res, next);
+      const duration = Date.now() - start;
+      req.log.trace({ routeName, duration }, '← Exit route (OK)');
+    } catch (err) {
+      const duration = Date.now() - start;
+      req.log.error({ routeName, duration, err }, '← Exit route (ERROR)');
+      next(err);
+    }
+  };
+}
+
 // --- Main ---
 async function main() {
   rdConfig = loadRdConfig('/usr/local/etc/reflink_dedupe.conf');
@@ -346,6 +365,7 @@ async function main() {
   db = await openDbReadonly();
 
   const app = express();
+  app.use(expressPino({ logger }));
   app.use(express.json());
 
   // --- Swagger UI ---
@@ -357,21 +377,21 @@ async function main() {
   app.use(authMiddleware);
 
   // --- Routes ---
-  app.post('/torrent/upload', upload.single('torrentFile'), uploadTorrent);
-  app.delete('/torrent/:id', deleteTorrent);
-  app.get('/torrent/:id', getTorrentMetadata);
-  app.get('/torrent/:id/filetree', getTorrentFiletree);
-  app.get('/torrent/:id/location', getTorrentLocation);
-  app.get('/torrent/:id/available', getTorrentAvailable);
-  app.post('/torrent/:id/prepare', prepareTorrent);
+  app.post('/torrent/upload', upload.single('torrentFile'), tracedRoute(uploadTorrent, 'uploadTorrent'));
+  app.delete('/torrent/:id', tracedRoute(deleteTorrent, 'deleteTorrent'));
+  app.get('/torrent/:id', tracedRoute(getTorrentMetadata, 'getTorrentMetadata'));
+  app.get('/torrent/:id/filetree', tracedRoute(getTorrentFiletree, 'getTorrentFiletree'));
+  app.get('/torrent/:id/location', tracedRoute(getTorrentLocation, 'getTorrentLocation'));
+  app.get('/torrent/:id/available', tracedRoute(getTorrentAvailable, 'getTorrentAvailable'));
+  app.post('/torrent/:id/prepare', tracedRoute(prepareTorrent, 'prepareTorrent'));
 
-  app.post('/duplicates/report', reportDuplicate);
-  app.post('/duplicates/create', createDuplicate);
+  app.post('/duplicates/report', tracedRoute(reportDuplicate, 'reportDuplicate'));
+  app.post('/duplicates/create', tracedRoute(createDuplicate, 'createDuplicate'));
 
   app.listen(serverConfig.PORT, () => {
-    console.log(`[${new Date().toISOString()}] Reflink Dedupe Server started on port ${serverConfig.PORT}`);
-    console.log(`[${new Date().toISOString()}] Root path: ${rdConfig.DEDUPLICATION_ROOT}`);
-    console.log(`[${new Date().toISOString()}] DB path: ${rdConfig.DB}`);
+    logger.info(`Reflink Dedupe Server started on port ${serverConfig.PORT}`);
+    logger.trace(`Root path: ${rdConfig.DEDUPLICATION_ROOT}`);
+    logger.trace(`DB path: ${rdConfig.DB}`);
   });
 }
 

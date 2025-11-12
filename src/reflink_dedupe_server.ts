@@ -242,7 +242,7 @@ async function getTorrentMetadata(req: Request, res: Response) {
 }
 
 async function computeAndCacheMissingPieces(
-  filePath: number,
+  filePath: string,
   fileHash: string,
   pieceLength: number,
   pieceCount: number,
@@ -376,8 +376,6 @@ async function getTorrentFiletree(req: Request, res: Response) {
             break;
           }
         }*/
-
-        fs.closeSync(fd);
 
         if (matched) {
           logger.trace(`[TRACE] Candidate matched: ${candidatePath}`);

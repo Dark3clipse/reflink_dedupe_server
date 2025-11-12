@@ -224,7 +224,7 @@ async function getTorrentFiletree(req: Request, res: Response) {
     })
     : (() => {
       let filePath;
-      if (Buffer.isBuffer(info.name)) {
+      if (info.name instanceof Uint8Array) {
         filePath = info.name.toString('utf8');
         console.log(`[TRACE] path is buffer`);
       }else if (Array.isArray(info.name)){
@@ -233,8 +233,6 @@ async function getTorrentFiletree(req: Request, res: Response) {
       }else{
         filePath = String(info.name);
         console.log(`[TRACE] path is other`);
-        console.log(typeof info.name);
-        console.log(info.name);
       }
       console.log(`[TRACE] Single-file torrent path: ${filePath}, length: ${info.length}`);
       return [{ path: filePath, length: info.length }];

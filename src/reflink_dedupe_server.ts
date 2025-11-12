@@ -23,6 +23,11 @@ interface ReflinkDedupeConfig {
 
 interface ServerConfig {
   PORT: number;
+  AUTH_TOKEN: string;
+  SUBPATH_LIBRARY: string;
+  SUBPATH_DOWNLOADS: string;
+  TMP_DIR: string;
+  DB: string;
 }
 
 interface FileTreeEntry {
@@ -32,6 +37,7 @@ interface FileTreeEntry {
 }
 
 let db: Database;
+let pieceDb: Database;
 let rdConfig: ReflinkDedupeConfig;
 let serverConfig: ServerConfig;
 
@@ -61,7 +67,7 @@ function loadServerConfig(filePath: string): ServerConfig {
       (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
     cfg[key.trim()] = value;
   }
-  return { PORT: parseInt(cfg.PORT, 10) || 8960, AUTH_TOKEN: cfg.AUTH_TOKEN || "", SUBPATH_LIBRARY: cfg.SUBPATH_LIBRARY || 'library', SUBPATH_DOWNLOADS: cfg.SUBPATH_DOWNLOADS || 'downloads', TMP_DIR: cfg.TMP_DIR || '/tmp/reflink_dedupe_server' };
+  return { PORT: parseInt(cfg.PORT, 10) || 8960, AUTH_TOKEN: cfg.AUTH_TOKEN || "", SUBPATH_LIBRARY: cfg.SUBPATH_LIBRARY || 'library', SUBPATH_DOWNLOADS: cfg.SUBPATH_DOWNLOADS || 'downloads', TMP_DIR: cfg.TMP_DIR || '/tmp/reflink_dedupe_server', DB: cfg.DB || '/var/db/reflink_dedupe_server.db' };
 }
 
 // --- Helper ---
@@ -74,6 +80,23 @@ async function openDbReadonly(): Promise<Database> {
   const dbPath = path.resolve(rdConfig.DB);
   if (!fs.existsSync(dbPath)) throw new Error(`Database file not found: ${dbPath}`);
   return open({ filename: dbPath, driver: sqlite3.Database, mode: sqlite3.OPEN_READONLY });
+}
+
+async function openPieceDb(): Promise<Database> {
+  const dbPath = path.resolve(serverConfig.DB);
+  await fs.promises.mkdir(path.dirname(dbPath), { recursive: true });
+  const dbConn = await open({ filename: dbPath, driver: sqlite3.Database });
+  await dbConn.exec(`
+  CREATE TABLE IF NOT EXISTS file_pieces (
+    file_hash TEXT NOT NULL,
+    piece_index INTEGER NOT NULL,
+    piece_hash TEXT NOT NULL,
+    piece_length INTEGER NOT NULL,
+    PRIMARY KEY (file_hash, piece_index)
+  );
+  CREATE INDEX IF NOT EXISTS idx_file_pieces_hash ON file_pieces(file_hash);
+  `);
+  return dbConn;
 }
 
 function bufferToString(buf: any): string {
@@ -89,6 +112,24 @@ function getPieceHashes(info: any): Buffer[] {
     pieces.push(buffer.subarray(i, i + 20));
   }
   return pieces;
+}
+
+async function getCachedPieceHashes(fileHash: string, pieceLength: number): Promise<Map<number, string>> {
+  const rows = await pieceDb.all('SELECT piece_index, piece_hash FROM file_pieces WHERE file_hash = ? AND piece_length = ?', fileHash, pieceLength);
+  const map = new Map<number, string>();
+  for (const row of rows) map.set(row.piece_index, row.piece_hash);
+  return map;
+}
+
+async function storePieceHashes(fileHash: string, pieceLength: number, pieceHashes: Buffer[]) {
+  const insert = await pieceDb.prepare(`
+  INSERT OR IGNORE INTO file_pieces (file_hash, piece_index, piece_hash, piece_length)
+  VALUES (?, ?, ?, ?)
+  `);
+  for (let i = 0; i < pieceHashes.length; i++) {
+    await insert.run(fileHash, i, pieceHashes[i].toString('hex'), pieceLength);
+  }
+  await insert.finalize();
 }
 
 // --- Token Auth middleware ---
@@ -243,7 +284,7 @@ async function getTorrentFiletree(req: Request, res: Response) {
       const locations: string[] = [];
 
       // 1️⃣ Get candidate files from DB by size
-      const candidates = await db.all('SELECT path FROM files WHERE file_size = ?', f.length);
+      const candidates = await db.all('SELECT path, hash FROM files WHERE file_size = ?', f.length);
       logger.trace(`[TRACE] Found ${candidates.length} candidates by size`);
 
       for (const c of candidates) {
@@ -251,10 +292,13 @@ async function getTorrentFiletree(req: Request, res: Response) {
         if (!fs.existsSync(candidatePath)) continue;
 
         logger.trace(`[TRACE] Checking candidate: ${candidatePath}`);
+        const fileHash = c.hash;
+        const cachedPieces = await getCachedPieceHashes(fileHash, pieceLength);
 
         const fd = fs.openSync(candidatePath, 'r');
         const pieceCount = Math.ceil(f.length / pieceLength);
         let matched = true;
+        const computedPieces: Buffer[] = [];
 
         for (let i = 0; i < pieceCount; i++) {
           // Compute offsets for this file within the global piece stream
@@ -262,17 +306,24 @@ async function getTorrentFiletree(req: Request, res: Response) {
           const pieceEndGlobal = Math.min(pieceStartGlobal + pieceLength, globalOffset + f.length);
           const readLength = pieceEndGlobal - pieceStartGlobal;
 
-          const buffer = Buffer.alloc(readLength);
-          fs.readSync(fd, buffer, 0, readLength, i * pieceLength);
+          let candidatePieceHash: Buffer;
 
-          const hash = crypto.createHash('sha1').update(buffer).digest();
+          if (cachedPieces.has(i)) {
+            candidatePieceHash = Buffer.from(cachedPieces.get(i)!, 'hex');
+          } else {
+            const buffer = Buffer.alloc(readLength);
+            fs.readSync(fd, buffer, 0, readLength, i * pieceLength);
+            candidatePieceHash = crypto.createHash('sha1').update(buffer).digest();
+            computedPieces.push(candidatePieceHash);
+          }
+
           const torrentHash = pieceHashes.slice((Math.floor(pieceStartGlobal / pieceLength)) * 20,
                                                 (Math.floor(pieceStartGlobal / pieceLength)) * 20 + 20);
 
           //logger.trace(`[TRACE] piece hash from torrent: ${torrentHash.toString('hex')}`);
           //logger.trace(`[TRACE] candidate piece hash: ${hash.toString('hex')}`);
 
-          if (!hash.equals(torrentHash)) {
+          if (!candidatePieceHash.equals(torrentHash)) {
             logger.trace(`[TRACE] Piece ${i} mismatch for candidate ${candidatePath}`);
             matched = false;
             break;
@@ -284,6 +335,12 @@ async function getTorrentFiletree(req: Request, res: Response) {
         if (matched) {
           logger.trace(`[TRACE] Candidate matched: ${candidatePath}`);
           locations.push(candidatePath);
+          if (computedPieces.length > 0) {
+            await storePieceHashes(fileHash, pieceLength, computedPieces);
+            logger.trace(
+              `[TRACE] Stored ${computedPieces.length} piece hashes for file ${candidatePath}`
+            );
+          }
         } else {
           logger.trace(`[TRACE] Candidate did not match: ${candidatePath}`);
         }
@@ -361,8 +418,9 @@ async function main() {
     fs.mkdirSync(torrentsDir);
   };
 
-  // open DB
+  // open DBs
   db = await openDbReadonly();
+  pieceDb = await openPieceDb();
 
 
   const app = express();

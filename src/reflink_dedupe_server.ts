@@ -22,25 +22,49 @@ let serverConfig: ServerConfig;
 
 function loadRdConfig(filePath: string): ReflinkDedupeConfig {
   const content = fs.readFileSync(filePath, 'utf-8');
-  const lines = content.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+  const lines = content.split('\n')
+  .map(l => l.trim())
+  .filter(l => l && !l.startsWith('#'));
+
   const cfg: any = {};
   for (const line of lines) {
     const [key, ...rest] = line.split('=');
-    cfg[key.trim()] = rest.join('=').trim();
+    let value = rest.join('=').trim();
+
+    // ✅ Strip surrounding quotes if present
+    if ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+      }
+
+      cfg[key.trim()] = value;
   }
+
   return {
     DB: cfg.DB || '/var/db/reflink_dedupe.db',
     DEDUPLICATION_ROOT: cfg.DEDUPLICATION_ROOT || '/',
   };
 }
 
+
 function loadServerConfig(filePath: string): ServerConfig {
   const content = fs.readFileSync(filePath, 'utf-8');
-  const lines = content.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+  const lines = content.split('\n')
+  .map(l => l.trim())
+  .filter(l => l && !l.startsWith('#'));
+
   const cfg: any = {};
   for (const line of lines) {
     const [key, ...rest] = line.split('=');
-    cfg[key.trim()] = rest.join('=').trim();
+    let value = rest.join('=').trim();
+
+    // ✅ Strip surrounding quotes if present
+    if ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+      }
+
+      cfg[key.trim()] = value;
   }
   return {
     PORT: parseInt(cfg.PORT, 10) || 8960,

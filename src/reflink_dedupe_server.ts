@@ -157,7 +157,7 @@ async function main() {
   if (!fs.existsSync(serverConfig.TMP_DIR)) {
     fs.mkdirSync(serverConfig.TMP_DIR);
   };
-  if (!fs.existsSync(fs.mkdirSync(torrentsDir))) {
+  if (!fs.existsSync(torrentsDir)) {
     fs.mkdirSync(torrentsDir);
   };
 

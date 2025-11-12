@@ -368,6 +368,11 @@ async function main() {
   const app = express();
   app.use(expressPino({ logger }));
   app.use(express.json());
+  app.use((req, res, next) => {
+    req.id = crypto.randomUUID();
+    req.log = logger.child({ reqId: req.id });
+    next();
+  });
   if (logger.level === 'trace') {
     app.use((req, res, next) => {
       const oldJson = res.json;

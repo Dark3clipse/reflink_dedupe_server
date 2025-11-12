@@ -192,7 +192,8 @@ async function getTorrentFiletree(req: Request, res: Response) {
     const filetree: FileTreeEntry[] = [];
 
     const torrentData = fs.readFileSync(torrentPath);
-    const decoded: any = bencode.decode(torrentData, { encoding: 'utf8' });
+    const decoded: any = bencode.decode(torrentData);
+    const decodedUTF: any = bencode.decode(torrentData, { encoding: 'utf8' });
 
     const info = decoded.info;
     const pieceLength: number = info['piece length'];

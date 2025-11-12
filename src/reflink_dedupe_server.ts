@@ -206,14 +206,27 @@ async function getTorrentFiletree(req: Request, res: Response) {
     } else {
       throw new Error('Unknown pieces type in torrent');
     }
+    console.log(`[TRACE] Torrent piece length: ${pieceLength}, total pieces: ${pieceHashes.length / 20}`);
+
 
     // Determine if multi-file torrent
     const files: { path: string; length: number }[] = info.files
-    ? info.files.map((f: any) => {
-      const decodedPathComponents = f.path.map((p: Buffer) => p.toString('utf8'));
-      return { path: decodedPathComponents.join('/'), length: f.length };
+    ? info.files.map((f: any, idx: number) => {
+      console.log(`[TRACE] Decoding multi-file path #${idx}`);
+      const pathComponents = f.path.map((p: Buffer, compIdx: number) => {
+        const str = p.toString('utf8');
+        console.log(`[TRACE] Path component ${compIdx}: ${str}`);
+        return str;
+      });
+      const filePath = pathComponents.join('/');
+      console.log(`[TRACE] Full file path: ${filePath}, length: ${f.length}`);
+      return { path: filePath, length: f.length };
     })
-    : [{ path: info.name.toString('utf8'), length: info.length }];
+    : (() => {
+      const filePath = info.name.toString('utf8');
+      console.log(`[TRACE] Single-file torrent path: ${filePath}, length: ${info.length}`);
+      return [{ path: filePath, length: info.length }];
+    })();
 
     let globalOffset = 0; // global byte offset in the torrent
 

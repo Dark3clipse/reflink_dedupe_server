@@ -134,7 +134,7 @@ async function getTorrentMetadata(req: Request, res: Response) {
 
     // Read and parse torrent
     const torrentData = fs.readFileSync(torrentPath);
-    const decoded = bencode.decode(torrentData) as any;
+    const decoded = bencode.decode(torrentData, { encoding: 'utf8' }) as any;
 
     // Torrent name
     let name = bufferToString(decoded.info?.name) || `Torrent-${id}`;

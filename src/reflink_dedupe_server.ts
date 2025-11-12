@@ -345,7 +345,7 @@ async function getTorrentFiletree(req: Request, res: Response) {
         let matched = true;
         const computedPieces: Buffer[] = [];
 
-        computeAndCacheMissingPieces(filePath, fileHash, pieceLength, pieceCount, cachedPieces, globalOffset, pieceHashes);
+        computeAndCacheMissingPieces(candidatePath, fileHash, pieceLength, pieceCount, cachedPieces, globalOffset, pieceHashes);
 
         /*for (let i = 0; i < pieceCount; i++) {
           // Compute offsets for this file within the global piece stream

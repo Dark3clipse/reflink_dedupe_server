@@ -1,11 +1,13 @@
-import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import express from 'express';
+import type { Request, Response, NextFunction } from 'express';
+import swaggerUi from 'swagger-ui-express';
+import yaml from 'yaml';
 import sqlite3 from 'sqlite3';
-import { open } from 'sqlite';
+import { open, Database } from 'sqlite';
 import bencode from 'bencode';
 import crypto from 'crypto';
-import express from 'express';
 
 interface ReflinkDedupeConfig {
   DB: string;
@@ -13,301 +15,135 @@ interface ReflinkDedupeConfig {
 }
 
 interface ServerConfig {
-  PORT: number
+  PORT: number;
 }
 
 let db: Database;
 let rdConfig: ReflinkDedupeConfig;
 let serverConfig: ServerConfig;
 
+// --- Load configs ---
 function loadRdConfig(filePath: string): ReflinkDedupeConfig {
   const content = fs.readFileSync(filePath, 'utf-8');
-  const lines = content.split('\n')
-  .map(l => l.trim())
-  .filter(l => l && !l.startsWith('#'));
-
+  const lines = content.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
   const cfg: any = {};
   for (const line of lines) {
     const [key, ...rest] = line.split('=');
     let value = rest.join('=').trim();
-
-    // ✅ Strip surrounding quotes if present
     if ((value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-      }
-
-      cfg[key.trim()] = value;
+      (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+    cfg[key.trim()] = value;
   }
-
-  return {
-    DB: cfg.DB || '/var/db/reflink_dedupe.db',
-    DEDUPLICATION_ROOT: cfg.DEDUPLICATION_ROOT || '/',
-  };
+  return { DB: cfg.DB || '/var/db/reflink_dedupe.db', DEDUPLICATION_ROOT: cfg.DEDUPLICATION_ROOT || '/' };
 }
-
 
 function loadServerConfig(filePath: string): ServerConfig {
   const content = fs.readFileSync(filePath, 'utf-8');
-  const lines = content.split('\n')
-  .map(l => l.trim())
-  .filter(l => l && !l.startsWith('#'));
-
+  const lines = content.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
   const cfg: any = {};
   for (const line of lines) {
     const [key, ...rest] = line.split('=');
     let value = rest.join('=').trim();
-
-    // ✅ Strip surrounding quotes if present
     if ((value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-      }
-
-      cfg[key.trim()] = value;
+      (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+    cfg[key.trim()] = value;
   }
-  return {
-    PORT: parseInt(cfg.PORT, 10) || 8960,
-  };
+  return { PORT: parseInt(cfg.PORT, 10) || 8960, AUTH_TOKEN: cfg.AUTH_TOKEN || "", SUBPATH_LIBRARY: cfg.SUBPATH_LIBRARY || 'library', SUBPATH_DOWNLOADS: cfg.SUBPATH_DOWNLOADS || 'downloads' };
 }
 
+// --- Helper ---
 function toAbsolutePath(p: string): string {
   if (p.startsWith('/')) return p;
   return rdConfig.DEDUPLICATION_ROOT.replace(/\/+$/, '') + '/' + p.replace(/^\/+/, '');
 }
 
-function sendJSON(res: http.ServerResponse, status: number, data: object) {
-  const json = JSON.stringify(data);
-  res.writeHead(status, {
-    'Content-Type': 'application/json',
-    'Content-Length': Buffer.byteLength(json),
-  });
-  res.end(json);
-}
-
-async function initDB(): Promise<Database> {
-  const database = await open({
-    filename: rdConfig.DB,
-    driver: sqlite3.Database
-  });
-
-  // Ensure schema exists
-  await database.exec(`
-    CREATE TABLE IF NOT EXISTS files (
-      id INTEGER PRIMARY KEY,
-      path TEXT UNIQUE,
-      hash TEXT,
-      last_checked INTEGER,
-      file_size INTEGER
-    );
-    CREATE TABLE IF NOT EXISTS duplicates (
-      id INTEGER PRIMARY KEY,
-      original TEXT NOT NULL,
-      duplicate TEXT NOT NULL,
-      reflinked INTEGER DEFAULT 0,
-      last_verified INTEGER,
-      CHECK(original < duplicate)
-    );
-    CREATE TABLE IF NOT EXISTS conflicts (
-      id INTEGER PRIMARY KEY,
-      path TEXT UNIQUE
-    );
-    CREATE TABLE IF NOT EXISTS metadata (
-      key TEXT PRIMARY KEY,
-      value TEXT
-    );
-    CREATE TABLE IF NOT EXISTS batch_hashes (
-      hash TEXT PRIMARY KEY
-    );
-    CREATE INDEX IF NOT EXISTS idx_files_hash_path ON files(hash, path);
-    CREATE INDEX IF NOT EXISTS idx_files_hash_size_path ON files(hash, file_size, path);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_duplicates_pair ON duplicates(original, duplicate);
-    CREATE INDEX IF NOT EXISTS idx_duplicates_duplicate ON duplicates(duplicate);
-    PRAGMA journal_mode=WAL;
-  `);
-
-  return database;
-}
-
 async function openDbReadonly(): Promise<Database> {
   const dbPath = path.resolve(rdConfig.DB);
-  if (!fs.existsSync(dbPath)) {
-    throw new Error(`Database file not found: ${dbPath}`);
-  }
-  const database = await open({
-    filename: dbPath,
-    driver: sqlite3.Database,
-    mode: sqlite3.OPEN_READONLY
-  });
-  return database;
+  if (!fs.existsSync(dbPath)) throw new Error(`Database file not found: ${dbPath}`);
+  return open({ filename: dbPath, driver: sqlite3.Database, mode: sqlite3.OPEN_READONLY });
 }
 
-// POST /torrent
-async function handleTorrent(req: http.IncomingMessage, res: http.ServerResponse) {
-  let chunks: Buffer[] = [];
-  req.on('data', (chunk) => { chunks.push(chunk); });
-  req.on('end', async () => {
-    try {
-      const buffer = Buffer.concat(chunks);
-      const torrent = bencode.decode(buffer);
-
-      if (!torrent.info || !torrent.info['piece length'] || !torrent.info.pieces) {
-        sendJSON(res, 400, { error: 'Invalid torrent file: missing info' });
-        return;
-      }
-
-      const pieceLength = torrent.info['piece length'] as number;
-      const piecesBuffer: Buffer = torrent.info.pieces as Buffer;
-      const numPieces = piecesBuffer.length / 20;
-
-      // File sizes
-      let totalSize = 0;
-      if (torrent.info.files) {
-        // Multi-file
-        totalSize = (torrent.info.files as any[]).reduce((sum, f) => sum + f.length, 0);
-      } else {
-        // Single file
-        totalSize = torrent.info.length as number;
-      }
-
-      // Split pieces into hashes
-      const pieceHashes: string[] = [];
-      for (let i = 0; i < numPieces; i++) {
-        const hashBuf = piecesBuffer.slice(i * 20, (i + 1) * 20);
-        pieceHashes.push(hashBuf.toString('hex'));
-      }
-
-      // Check how many hashes exist in DB
-      const placeholders = pieceHashes.map(() => '?').join(',');
-      const rows = await db.all(
-        `SELECT DISTINCT hash FROM files WHERE hash IN (${placeholders})`,
-        ...pieceHashes
-      );
-      const existingHashes = new Set(rows.map((r: any) => r.hash));
-
-      // Compute matched size
-      let matchedSize = 0;
-      for (let i = 0; i < numPieces; i++) {
-        if (existingHashes.has(pieceHashes[i])) {
-          // All pieces except last are full pieceLength
-          if (i < numPieces - 1) {
-            matchedSize += pieceLength;
-          } else {
-            // Last piece may be smaller
-            const lastSize = totalSize - pieceLength * (numPieces - 1);
-            matchedSize += lastSize;
-          }
-        }
-      }
-
-      const percentage = totalSize > 0 ? (matchedSize / totalSize) * 100 : 0;
-
-      sendJSON(res, 200, {
-        totalSize,
-        matchedSize,
-        percentage: percentage.toFixed(2),
-      });
-    } catch (e) {
-      console.error('Error in /torrent:', e);
-      sendJSON(res, 400, { error: 'Invalid torrent file' });
-    }
-  });
+// --- Token Auth middleware ---
+function authMiddleware(req: Request, res: Response, next: NextFunction) {
+  const authHeader = req.headers['authorization'];
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return res.status(401).json({ error: 'Missing token' });
+  const token = authHeader.split(' ')[1];
+  // Placeholder: validate token here
+  if (token !== serverConfig.AUTH_TOKEN) return res.status(403).json({ error: 'Invalid token' });
+  next();
 }
 
-// POST /duplicate
-async function handleDuplicate(req: http.IncomingMessage, res: http.ServerResponse) {
-  let body = '';
-  req.on('data', chunk => { body += chunk.toString(); });
-  req.on('end', async () => {
-    try {
-      const data = JSON.parse(body);
-      const { original, duplicate, reflinked } = data;
-
-      if (typeof original !== 'string' || typeof duplicate !== 'string') {
-        sendJSON(res, 400, { error: 'original and duplicate must be strings' });
-        return;
-      }
-      if (reflinked !== 0 && reflinked !== 1) {
-        sendJSON(res, 400, { error: 'reflinked must be 0 or 1' });
-        return;
-      }
-
-      const absOriginal = toAbsolutePath(original);
-      const absDuplicate = toAbsolutePath(duplicate);
-
-      if (!absOriginal.startsWith(rdConfig.DEDUPLICATION_ROOT) || !absDuplicate.startsWith(rdConfig.DEDUPLICATION_ROOT)) {
-        sendJSON(res, 400, { error: 'Paths must be inside deduplication root' });
-        return;
-      }
-
-      // Enforce ordering for CHECK(original < duplicate)
-      const [o, d] = absOriginal < absDuplicate ? [absOriginal, absDuplicate] : [absDuplicate, absOriginal];
-
-      await db.run(
-        `INSERT INTO duplicates (original, duplicate, reflinked)
-         VALUES (?, ?, ?)
-         ON CONFLICT(original, duplicate) DO UPDATE SET reflinked=excluded.reflinked`,
-        o, d, reflinked
-      );
-
-      sendJSON(res, 200, { status: 'OK' });
-    } catch (e) {
-      console.error('Error in /duplicate:', e);
-      sendJSON(res, 400, { error: 'Invalid JSON payload' });
-    }
-  });
+// --- Placeholder endpoint implementations ---
+async function uploadTorrent(req: Request, res: Response) {
+  res.json({ id: 'placeholder-torrent-id' });
 }
 
-// GET /hash/:hash
-async function handleHash(req: http.IncomingMessage, res: http.ServerResponse) {
-  const urlParts = req.url?.split('/') || [];
-  if (urlParts.length !== 3 || !urlParts[2]) {
-    sendJSON(res, 400, { error: 'Hash not provided' });
-    return;
-  }
-  const hash = urlParts[2];
-  try {
-    const row = await db.get('SELECT 1 FROM files WHERE hash = ? LIMIT 1', hash);
-    sendJSON(res, 200, { exists: !!row });
-  } catch (e) {
-    console.error('Error in /hash:', e);
-    sendJSON(res, 500, { error: 'Internal Server Error' });
-  }
+async function deleteTorrent(req: Request, res: Response) {
+  res.json({ success: true });
 }
 
+async function getTorrentMetadata(req: Request, res: Response) {
+  res.json({ id: req.params.id, name: 'Torrent Name', size: 12345, fileCount: 1 });
+}
+
+async function getTorrentFiletree(req: Request, res: Response) {
+  res.json([{ path: 'file.txt', size: 123, locations: ['/path/to/file.txt'] }]);
+}
+
+async function getTorrentLocation(req: Request, res: Response) {
+  res.json({ downloadsPercentage: 100, libraryPercentage: 50 });
+}
+
+async function getTorrentAvailable(req: Request, res: Response) {
+  res.json({ totalFiles: 10, filesFound: 7, availablePercentage: 70.0 });
+}
+
+async function prepareTorrent(req: Request, res: Response) {
+  res.json({ success: true, message: 'Prepared torrent folder (placeholder)' });
+}
+
+async function reportDuplicate(req: Request, res: Response) {
+  res.json({ success: true, message: 'Duplicate verified (placeholder)' });
+}
+
+async function createDuplicate(req: Request, res: Response) {
+  res.json({ success: true, message: 'Duplicate created (placeholder)' });
+}
+
+// --- Main ---
 async function main() {
   rdConfig = loadRdConfig('/usr/local/etc/reflink_dedupe.conf');
   serverConfig = loadServerConfig('/usr/local/etc/reflink_dedupe_server.conf');
   db = await openDbReadonly();
 
-  console.log(`[${new Date().toISOString()}] Reflink Dedupe Server started on port ${serverConfig.PORT}`);
-  console.log(`Root path: ${rdConfig.DEDUPLICATION_ROOT}`);
-  console.log(`DB path: ${rdConfig.DB}`);
+  const app = express();
+  app.use(express.json());
 
-  const server = http.createServer((req, res) => {
-    if (req.method === 'POST' && req.url === '/duplicate') {
-      handleDuplicate(req, res).catch(err => {
-        console.error('Error handling /duplicate:', err);
-        if (!res.headersSent) sendJSON(res, 500, { error: 'Internal Server Error' });
-      });
-    } else if (req.method === 'GET' && req.url?.startsWith('/hash/')) {
-      handleHash(req, res).catch(err => {
-        console.error('Error handling /hash:', err);
-        if (!res.headersSent) sendJSON(res, 500, { error: 'Internal Server Error' });
-      });
-    } else if (req.method === 'POST' && req.url === '/torrent') {
-      handleTorrent(req, res).catch(err => {
-        console.error('Error handling /torrent:', err);
-        if (!res.headersSent) sendJSON(res, 500, { error: 'Internal Server Error' });
-      });
-    } else if (req.method === 'GET' && req.url === '/health') {
-      sendJSON(res, 200, { status: 'alive' });
-    } else {
-      sendJSON(res, 404, { error: 'Not found' });
-    }
+  // --- Swagger UI ---
+  const specPath = path.resolve('./openapi/openapi.yaml');
+  const openapiSpec = yaml.parse(fs.readFileSync(specPath, 'utf8'));
+  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
+
+  // --- Apply auth globally ---
+  app.use(authMiddleware);
+
+  // --- Routes ---
+  app.post('/torrent/upload', uploadTorrent);
+  app.delete('/torrent/:id', deleteTorrent);
+  app.get('/torrent/:id', getTorrentMetadata);
+  app.get('/torrent/:id/filetree', getTorrentFiletree);
+  app.get('/torrent/:id/location', getTorrentLocation);
+  app.get('/torrent/:id/available', getTorrentAvailable);
+  app.post('/torrent/:id/prepare', prepareTorrent);
+
+  app.post('/duplicates/report', reportDuplicate);
+  app.post('/duplicates/create', createDuplicate);
+
+  app.listen(serverConfig.PORT, () => {
+    console.log(`[${new Date().toISOString()}] Reflink Dedupe Server started on port ${serverConfig.PORT}`);
+    console.log(`[${new Date().toISOString()}] Root path: ${rdConfig.DEDUPLICATION_ROOT}`);
+    console.log(`[${new Date().toISOString()}] DB path: ${rdConfig.DB}`);
   });
-
-  server.listen(serverConfig.PORT);
 }
 
 main().catch(err => {

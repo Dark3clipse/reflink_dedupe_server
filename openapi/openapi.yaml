@@ -1,0 +1,353 @@
+openapi: 3.0.4
+info:
+  title: Reflink Dedupe Server API
+  version: 1.0.0
+  description: API for managing torrents, tracking file locations, and reporting/creating duplicates.
+
+servers:
+  - url: http://localhost:3000
+    description: Local development server
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: token
+
+  schemas:
+    TorrentMetadata:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "123abc"
+        name:
+          type: string
+          example: "Ubuntu 24.04 ISO"
+        size:
+          type: integer
+          description: Total size in bytes
+          example: 4096000000
+        fileCount:
+          type: integer
+          example: 12
+
+    FileTreeEntry:
+      type: object
+      properties:
+        path:
+          type: string
+          description: Relative path inside the torrent
+          example: "ubuntu-24.04.iso"
+        size:
+          type: integer
+          example: 4096000000
+        locations:
+          type: array
+          items:
+            type: string
+          description: Paths on the filesystem where this file exists (hash-based lookup)
+          example: ["/mnt/dedupe/downloads/ubuntu-24.04.iso"]
+
+    TorrentLocation:
+      type: object
+      properties:
+        downloadsPercentage:
+          type: number
+          format: float
+          description: >
+            How much of the torrent exists in the 'downloads' subpath.
+            100 means all files exist once, duplicates can push it >100.
+          example: 120.5
+        libraryPercentage:
+          type: number
+          format: float
+          description: >
+            How much of the torrent exists in the 'library' subpath.
+            100 means all files exist once, duplicates can push it >100.
+          example: 87.3
+
+    AvailablePercentage:
+      type: object
+      properties:
+        totalFiles:
+          type: integer
+          description: Total number of files in the torrent
+          example: 12
+        filesFound:
+          type: integer
+          description: Number of files present somewhere in the deduplication root
+          example: 8
+        availablePercentage:
+          type: number
+          format: float
+          description: >
+            Percentage of total filesize that exists somewhere in the deduplication root.
+          example: 45.2
+
+    PrepareRequest:
+      type: object
+      properties:
+        targetPath:
+          type: string
+          description: Filesystem path where the prepared torrent folder/file should be created
+          example: "/mnt/storage/prepared"
+
+    PrepareResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Prepared torrent folder with 3 existing files reflinked."
+
+    DuplicateReportRequest:
+      type: object
+      properties:
+        originalPath:
+          type: string
+          description: Path of the original file
+          example: "/mnt/dedupe/downloads/ubuntu-24.04.iso"
+        duplicatePath:
+          type: string
+          description: Path of the duplicate file created by the client
+          example: "/mnt/dedupe/downloads/ubuntu-24.04-copy.iso"
+
+    DuplicateReportResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: True if the server verified the duplicate, false otherwise
+          example: true
+        message:
+          type: string
+          description: Optional human-readable message
+          example: "Duplicate verified successfully."
+
+    DuplicateCreateRequest:
+      type: object
+      properties:
+        originalPath:
+          type: string
+          description: Path of the original file
+          example: "/mnt/dedupe/downloads/ubuntu-24.04.iso"
+        duplicatePath:
+          type: string
+          description: Path where the server should create the duplicate
+          example: "/mnt/dedupe/downloads/ubuntu-24.04-copy.iso"
+
+    DuplicateCreateResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: True if the server successfully created the duplicate, false otherwise
+          example: true
+        message:
+          type: string
+          description: Optional human-readable message
+          example: "Duplicate created successfully."
+
+security:
+  - BearerAuth: []
+
+paths:
+  # --- Existing torrent endpoints ---
+  /torrent/upload:
+    post:
+      summary: Upload a new torrent
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                torrentFile:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Torrent successfully uploaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    example: "123abc"
+
+  /torrent/{id}:
+    delete:
+      summary: Delete a torrent
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Torrent deleted successfully
+        '404':
+          description: Torrent not found
+
+    get:
+      summary: Get torrent metadata
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Torrent metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TorrentMetadata'
+        '404':
+          description: Torrent not found
+
+  /torrent/{id}/filetree:
+    get:
+      summary: Get the filetree of a torrent
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: JSON object with file paths and locations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FileTreeEntry'
+        '404':
+          description: Torrent not found
+
+  /torrent/{id}/location:
+    get:
+      summary: Get torrent location statistics
+      description: >
+        Returns how much of the torrent exists in the configured `downloads` and `library`
+        subpaths under `DEDUPLICATION_ROOT`. Percentages can be more than 100 due to duplicates.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Torrent location percentages
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TorrentLocation'
+        '404':
+          description: Torrent not found
+
+  /torrent/{id}/available:
+    get:
+      summary: Get torrent availability statistics
+      description: >
+        Returns total number of files in the torrent, number of files found somewhere
+        in the deduplication root, and total available percentage (filesize-based).
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Torrent availability statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailablePercentage'
+        '404':
+          description: Torrent not found
+
+  /torrent/{id}/prepare:
+    post:
+      summary: Prepare torrent files
+      description: >
+        Looks up all files in the torrent and creates a folder/file at the specified location,
+        reflinking or copying files that already exist in the filesystem.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrepareRequest'
+      responses:
+        '200':
+          description: Preparation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrepareResponse'
+        '404':
+          description: Torrent not found
+
+  /duplicates/report:
+    post:
+      summary: Report a new duplicate
+      description: >
+        Client reports a duplicate by providing two file paths. The server verifies
+        whether the second file is indeed a duplicate of the first.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DuplicateReportRequest'
+      responses:
+        '200':
+          description: Duplicate verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DuplicateReportResponse'
+        '400':
+          description: Invalid request
+
+  /duplicates/create:
+    post:
+      summary: Create a new duplicate
+      description: >
+        Server attempts to create a duplicate of a file at a specified target path.
+        Returns success if the duplicate was created, false if it failed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DuplicateCreateRequest'
+      responses:
+        '200':
+          description: Duplicate creation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DuplicateCreateResponse'
+        '400':
+          description: Invalid request or creation failed

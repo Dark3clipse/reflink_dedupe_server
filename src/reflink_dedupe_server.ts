@@ -192,7 +192,8 @@ async function getTorrentFiletree(req: Request, res: Response) {
     const decoded = bencode.decode(torrentData, 'utf8') as any;
 
     const pieceLength = decoded.info['piece length'];
-    const pieceHashes = Buffer.from(decoded.info.pieces, 'binary');
+    //const pieceHashes = Buffer.from(decoded.info.pieces, 'binary');
+    const pieceHashes: Buffer = Buffer.from(decoded.info.pieces as Uint8Array);
 
     const files = decoded.info.files
     ? decoded.info.files.map((f: any) => ({ path: f.path.join('/'), length: f.length }))
@@ -235,6 +236,12 @@ async function getTorrentFiletree(req: Request, res: Response) {
 
             const hash = crypto.createHash('sha1').update(buffer.slice(0, readBytes)).digest();
             const torrentHash = pieceHashes.slice(i * 20, i * 20 + 20);
+            if (!Buffer.isBuffer(torrentHash)) {
+              console.log('[TRACE] Torrent hash is not a buffer!');
+            }
+
+            console.log('[TRACE] piece hash from torrent:', torrentHash.toString('hex'));
+            console.log('[TRACE] candidate piece hash:', hash.toString('hex'));
 
             if (!hash.equals(torrentHash)) {
               pieceMatch = false;

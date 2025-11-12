@@ -102,7 +102,7 @@ async function uploadTorrent(req: Request, res: Response) {
 
 async function deleteTorrent(req: Request, res: Response) {
   const { id } = req.params;
-  const torrentPath = path.join(serverConfig.TMP_DIR, 'torrents', `${id}.torrent`);
+  const torrentPath = path.join(torrentsDir, `${id}.torrent`);
 
   try {
     if (!fs.existsSync(torrentPath)) {
@@ -154,8 +154,12 @@ async function main() {
   torrentsDir = path.join(serverConfig.TMP_DIR, 'torrents')
 
   // create temporary directories
-  fs.mkdirSync(serverConfig.TMP_DIR);
-  fs.mkdirSync(torrentsDir);
+  if (!fs.existsSync(serverConfig.TMP_DIR)){
+    fs.mkdirSync(serverConfig.TMP_DIR);
+  }
+  if (!fs.existsSync(fs.mkdirSync(torrentsDir)){
+    fs.mkdirSync(torrentsDir);
+  }
 
   // open DB
   db = await openDbReadonly();

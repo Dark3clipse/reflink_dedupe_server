@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import sqlite3 from 'sqlite3';
 import { open, Database } from 'sqlite';
-import bencode from 'bencode';
+import * as bencode from 'bencode';
 import crypto from 'crypto';
 
 interface ReflinkDedupeConfig {

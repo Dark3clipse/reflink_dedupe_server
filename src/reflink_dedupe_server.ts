@@ -68,6 +68,12 @@ async function openDbReadonly(): Promise<Database> {
   return open({ filename: dbPath, driver: sqlite3.Database, mode: sqlite3.OPEN_READONLY });
 }
 
+function bufferToString(buf: any): string {
+  if (Buffer.isBuffer(buf)) return buf.toString('utf8');
+  if (Array.isArray(buf)) return buf.map(bufferToString).join('');
+  return String(buf);
+}
+
 // --- Token Auth middleware ---
 function authMiddleware(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
@@ -131,7 +137,7 @@ async function getTorrentMetadata(req: Request, res: Response) {
     const decoded = bencode.decode(torrentData) as any;
 
     // Torrent name
-    let name = decoded.info?.name?.toString() || `Torrent-${id}`;
+    let name = bufferToString(decoded.info?.name) || `Torrent-${id}`;
 
     // List of files and total size
     let files = [];

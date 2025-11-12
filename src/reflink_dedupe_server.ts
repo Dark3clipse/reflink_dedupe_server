@@ -242,7 +242,7 @@ async function getTorrentMetadata(req: Request, res: Response) {
 }
 
 async function computeAndCacheMissingPieces(
-  fd: number,
+  filePath: number,
   fileHash: string,
   pieceLength: number,
   pieceCount: number,
@@ -262,7 +262,7 @@ async function computeAndCacheMissingPieces(
 
     tasks.push(
       limit(async () => {
-        const pieceHash = await hashPiece(fd, i * pieceLength, readLength);
+        const pieceHash = await hashPiece(filePath, i * pieceLength, readLength);
         computedPieces[i] = pieceHash;
       })
     );
@@ -341,13 +341,11 @@ async function getTorrentFiletree(req: Request, res: Response) {
         const fileHash = c.hash;
         const cachedPieces = await getCachedPieceHashes(fileHash, pieceLength);
 
-        const fd = fs.openSync(candidatePath, 'r');
         const pieceCount = Math.ceil(f.length / pieceLength);
         let matched = true;
         const computedPieces: Buffer[] = [];
 
-
-        computeAndCacheMissingPieces(fd, fileHash, pieceLength, pieceCount, cachedPieces, globalOffset, pieceHashes);
+        computeAndCacheMissingPieces(filePath, fileHash, pieceLength, pieceCount, cachedPieces, globalOffset, pieceHashes);
 
         /*for (let i = 0; i < pieceCount; i++) {
           // Compute offsets for this file within the global piece stream

@@ -11,6 +11,10 @@ import bencode from 'bencode';
 import crypto from 'crypto';
 import multer from 'multer';
 import { logger } from './logger.ts';
+import pLimit from 'p-limit';
+
+// Limit concurrent hashing to avoid disk contention
+const limit = pLimit(8); // up to 8 pieces read in parallel
 
 // --- Setup multer storage in TMP_DIR/torrents ---
 let torrentsDir: string;
@@ -132,6 +136,17 @@ async function storePieceHashes(fileHash: string, pieceLength: number, pieceHash
   await insert.finalize();
 }
 
+async function hashPiece(filePath: string, offset: number, length: number): Promise<Buffer> {
+  const fh = await fs.open(filePath, 'r');
+  try {
+    const buffer = Buffer.alloc(length);
+    await fh.read(buffer, 0, length, offset);
+    return crypto.createHash('sha1').update(buffer).digest();
+  } finally {
+    await fh.close();
+  }
+}
+
 // --- Token Auth middleware ---
 function authMiddleware(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
@@ -226,6 +241,37 @@ async function getTorrentMetadata(req: Request, res: Response) {
   }
 }
 
+async function computeAndCacheMissingPieces(
+  fd: number,
+  fileHash: string,
+  pieceLength: number,
+  pieceCount: number,
+  cachedPieces: Map<number, string>,
+  globalOffset: number,
+  torrentPieceHashes: Buffer
+): Promise<Buffer[]> {
+  const computedPieces: Buffer[] = [];
+  const tasks: Promise<void>[] = [];
+
+  for (let i = 0; i < pieceCount; i++) {
+    if (cachedPieces.has(i)) continue;
+
+    const pieceStartGlobal = globalOffset + i * pieceLength;
+    const pieceEndGlobal = pieceStartGlobal + pieceLength;
+    const readLength = pieceEndGlobal - pieceStartGlobal;
+
+    tasks.push(
+      limit(async () => {
+        const pieceHash = await hashPiece(fd, i * pieceLength, readLength);
+        computedPieces[i] = pieceHash;
+      })
+    );
+  }
+
+  await Promise.all(tasks);
+  return computedPieces.filter(Boolean);
+}
+
 async function getTorrentFiletree(req: Request, res: Response) {
   try{
 
@@ -300,7 +346,10 @@ async function getTorrentFiletree(req: Request, res: Response) {
         let matched = true;
         const computedPieces: Buffer[] = [];
 
-        for (let i = 0; i < pieceCount; i++) {
+
+        computeAndCacheMissingPieces(fd, fileHash, pieceLength, pieceCount, cachedPieces, globalOffset, pieceHashes);
+
+        /*for (let i = 0; i < pieceCount; i++) {
           // Compute offsets for this file within the global piece stream
           const pieceStartGlobal = globalOffset + i * pieceLength;
           const pieceEndGlobal = Math.min(pieceStartGlobal + pieceLength, globalOffset + f.length);
@@ -328,7 +377,7 @@ async function getTorrentFiletree(req: Request, res: Response) {
             matched = false;
             break;
           }
-        }
+        }*/
 
         fs.closeSync(fd);
 
@@ -336,10 +385,14 @@ async function getTorrentFiletree(req: Request, res: Response) {
           logger.trace(`[TRACE] Candidate matched: ${candidatePath}`);
           locations.push(candidatePath);
           if (computedPieces.length > 0) {
-            await storePieceHashes(fileHash, pieceLength, computedPieces);
-            logger.trace(
-              `[TRACE] Stored ${computedPieces.length} piece hashes for file ${candidatePath}`
-            );
+            setImmediate(async () => {
+              try {
+                await storePieceHashes(fileHash, pieceLength, computedPieces);
+                logger.trace(`[TRACE] Stored ${computedPieces.length} piece hashes for ${candidatePath}`);
+              } catch (err) {
+                logger.error({ err }, `[TRACE] Failed to store piece hashes for ${candidatePath}`);
+              }
+            });
           }
         } else {
           logger.trace(`[TRACE] Candidate did not match: ${candidatePath}`);
@@ -468,6 +521,13 @@ async function main() {
     logger.trace(`DB path: ${rdConfig.DB}`);
   });
 }
+
+process.on('SIGINT', async () => {
+  logger.info('Waiting for background tasks to finish...');
+  await Promise.allSettled(backgroundTasks);
+  await Promise.allSettled([db?.close(), pieceDb?.close()]);
+  process.exit(0);
+});
 
 main().catch(err => {
   console.error('Failed to start server:', err);

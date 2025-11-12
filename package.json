@@ -5,8 +5,8 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node dist/reflink_dedupe_server.js",
-    "dev": "ts-node-esm src/reflink_dedupe_server.ts",
+    "start": "NODE_ENV=production node dist/reflink_dedupe_server.js",
+    "dev": "NODE_ENV=development ts-node-esm src/reflink_dedupe_server.ts",
     "build": "tsc"
   },
   "keywords": [],

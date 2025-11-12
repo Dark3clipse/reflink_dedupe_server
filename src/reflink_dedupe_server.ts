@@ -364,9 +364,20 @@ async function main() {
   // open DB
   db = await openDbReadonly();
 
+
   const app = express();
   app.use(expressPino({ logger }));
   app.use(express.json());
+  if (logger.level === 'trace') {
+    app.use((req, res, next) => {
+      const oldJson = res.json;
+      res.json = function (body) {
+        logger.trace({ url: req.originalUrl, body }, 'Response JSON');
+        return oldJson.call(this, body);
+      };
+      next();
+    });
+  }
 
   // --- Swagger UI ---
   const specPath = path.resolve('./openapi/openapi.yaml');

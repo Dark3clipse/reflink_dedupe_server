@@ -89,12 +89,12 @@ async function openPieceDb(): Promise<Database> {
   await dbConn.exec(`
   CREATE TABLE IF NOT EXISTS file_pieces (
     file_hash TEXT NOT NULL,
+    piece_length INTEGER NOT NULL,
     piece_index INTEGER NOT NULL,
     piece_hash TEXT NOT NULL,
-    piece_length INTEGER NOT NULL,
-    PRIMARY KEY (file_hash, piece_index)
+    PRIMARY KEY (file_hash, piece_length, piece_index)
   );
-  CREATE INDEX IF NOT EXISTS idx_file_pieces_hash ON file_pieces(file_hash);
+  CREATE INDEX IF NOT EXISTS idx_file_pieces_hash_piece_length ON file_pieces(file_hash, piece_length);
   `);
   return dbConn;
 }
@@ -123,11 +123,11 @@ async function getCachedPieceHashes(fileHash: string, pieceLength: number): Prom
 
 async function storePieceHashes(fileHash: string, pieceLength: number, pieceHashes: Buffer[]) {
   const insert = await pieceDb.prepare(`
-  INSERT OR IGNORE INTO file_pieces (file_hash, piece_index, piece_hash, piece_length)
+  INSERT OR IGNORE INTO file_pieces (file_hash, piece_length, piece_index, piece_hash)
   VALUES (?, ?, ?, ?)
   `);
   for (let i = 0; i < pieceHashes.length; i++) {
-    await insert.run(fileHash, i, pieceHashes[i].toString('hex'), pieceLength);
+    await insert.run(fileHash, pieceLength, i, pieceHashes[i].toString('hex'));
   }
   await insert.finalize();
 }

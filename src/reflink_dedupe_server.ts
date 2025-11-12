@@ -154,12 +154,12 @@ async function main() {
   torrentsDir = path.join(serverConfig.TMP_DIR, 'torrents')
 
   // create temporary directories
-  if (!fs.existsSync(serverConfig.TMP_DIR)){
+  if (!fs.existsSync(serverConfig.TMP_DIR)) {
     fs.mkdirSync(serverConfig.TMP_DIR);
-  }
-  if (!fs.existsSync(fs.mkdirSync(torrentsDir)){
+  };
+  if (!fs.existsSync(fs.mkdirSync(torrentsDir))) {
     fs.mkdirSync(torrentsDir);
-  }
+  };
 
   // open DB
   db = await openDbReadonly();

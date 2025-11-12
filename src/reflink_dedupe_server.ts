@@ -183,7 +183,7 @@ async function getTorrentMetadata(req: Request, res: Response) {
   }
 }
 
-async function getTorrentFiletree(torrentPath: string, db: Database, dedupRoot: string): Promise<FileTreeEntry[]> {
+async function getTorrentFiletree(req: Request, res: Response) {
   try{
     const torrentId = req.params.id;
     const torrentPath = path.join(serverConfig.TMP_DIR, 'torrents', `${torrentId}.torrent`);
@@ -223,7 +223,7 @@ async function getTorrentFiletree(torrentPath: string, db: Database, dedupRoot: 
       console.log(`[TRACE] Found ${candidates.length} candidates by size`);
 
       for (const c of candidates) {
-        const candidatePath = path.isAbsolute(c.path) ? c.path : path.join(dedupRoot, c.path);
+        const candidatePath = path.isAbsolute(c.path) ? c.path : path.join(rdConfig.DEDUPLICATION_ROOT, c.path);
         if (!fs.existsSync(candidatePath)) continue;
 
         console.log(`[TRACE] Checking candidate: ${candidatePath}`);
@@ -275,7 +275,7 @@ async function getTorrentFiletree(torrentPath: string, db: Database, dedupRoot: 
     }
 
     console.log(`[TRACE] Filetree completed for torrent ${path.basename(torrentPath)}`);
-    return filetree;
+    res.json(filetree);
   }catch (err){
     console.error('Failed to compute torrent filetree:', err);
     res.status(500).json({ error: 'Failed to compute torrent filetree' });

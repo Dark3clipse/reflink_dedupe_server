@@ -106,12 +106,15 @@ async function initDB(): Promise<Database> {
 }
 
 async function openDbReadonly(): Promise<Database> {
+  const dbPath = path.resolve(rdConfig.DB);
+  if (!fs.existsSync(dbPath)) {
+    throw new Error(`Database file not found: ${dbPath}`);
+  }
   const database = await open({
-    filename: rdConfig.DB,
+    filename: dbPath,
     driver: sqlite3.Database,
     mode: sqlite3.OPEN_READONLY
   });
-
   return database;
 }
 

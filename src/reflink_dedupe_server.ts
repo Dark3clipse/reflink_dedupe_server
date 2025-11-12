@@ -2,9 +2,10 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import sqlite3 from 'sqlite3';
-import { open, Database } from 'sqlite';
-import * as bencode from 'bencode';
+import { open } from 'sqlite';
+import bencode from 'bencode';
 import crypto from 'crypto';
+import express from 'express';
 
 interface ReflinkDedupeConfig {
   DB: string;

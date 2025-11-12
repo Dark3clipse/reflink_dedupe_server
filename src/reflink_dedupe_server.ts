@@ -8,6 +8,11 @@ import sqlite3 from 'sqlite3';
 import { open, Database } from 'sqlite';
 import bencode from 'bencode';
 import crypto from 'crypto';
+import multer from 'multer';
+
+// --- Setup multer storage in TMP_DIR/torrents ---
+let torrentsDir: string;
+const upload = multer({ storage: multer.memoryStorage() }); // store in memory, we'll write manually
 
 interface ReflinkDedupeConfig {
   DB: string;
@@ -48,7 +53,7 @@ function loadServerConfig(filePath: string): ServerConfig {
       (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
     cfg[key.trim()] = value;
   }
-  return { PORT: parseInt(cfg.PORT, 10) || 8960, AUTH_TOKEN: cfg.AUTH_TOKEN || "", SUBPATH_LIBRARY: cfg.SUBPATH_LIBRARY || 'library', SUBPATH_DOWNLOADS: cfg.SUBPATH_DOWNLOADS || 'downloads' };
+  return { PORT: parseInt(cfg.PORT, 10) || 8960, AUTH_TOKEN: cfg.AUTH_TOKEN || "", SUBPATH_LIBRARY: cfg.SUBPATH_LIBRARY || 'library', SUBPATH_DOWNLOADS: cfg.SUBPATH_DOWNLOADS || 'downloads', TMP_DIR: cfg.TMP_DIR || '/tmp/reflink_dedupe_server' };
 }
 
 // --- Helper ---
@@ -75,7 +80,24 @@ function authMiddleware(req: Request, res: Response, next: NextFunction) {
 
 // --- Placeholder endpoint implementations ---
 async function uploadTorrent(req: Request, res: Response) {
-  res.json({ id: 'placeholder-torrent-id' });
+  if (!req.file) {
+    return res.status(400).json({ error: 'No torrent file uploaded' });
+  }
+
+  try {
+    // Generate a random ID for the torrent (could also use a hash)
+    const id = crypto.randomBytes(8).toString('hex');
+    const torrentPath = path.join(torrentsDir, `${id}.torrent`);
+
+    // Save the uploaded file
+    fs.writeFileSync(torrentPath, req.file.buffer);
+
+    // Return the torrent ID
+    res.json({ id });
+  } catch (err) {
+    console.error('Failed to save torrent:', err);
+    res.status(500).json({ error: 'Failed to save torrent' });
+  }
 }
 
 async function deleteTorrent(req: Request, res: Response) {
@@ -114,6 +136,15 @@ async function createDuplicate(req: Request, res: Response) {
 async function main() {
   rdConfig = loadRdConfig('/usr/local/etc/reflink_dedupe.conf');
   serverConfig = loadServerConfig('/usr/local/etc/reflink_dedupe_server.conf');
+
+  // Derive temporary locations
+  torrentsDir = path.join(serverConfig.TMP_DIR, 'torrents')
+
+  // create temporary directories
+  fs.mkdirSync(serverConfig.TMP_DIR);
+  fs.mkdirSync(torrentsDir);
+
+  // open DB
   db = await openDbReadonly();
 
   const app = express();
@@ -128,7 +159,7 @@ async function main() {
   app.use(authMiddleware);
 
   // --- Routes ---
-  app.post('/torrent/upload', uploadTorrent);
+  app.post('/torrent/upload', upload.single('torrentFile'), uploadTorrent);
   app.delete('/torrent/:id', deleteTorrent);
   app.get('/torrent/:id', getTorrentMetadata);
   app.get('/torrent/:id/filetree', getTorrentFiletree);

@@ -1,4 +1,5 @@
 import fs from 'fs';
+import fsPromises from 'fs/promises';
 import path from 'path';
 import express from 'express';
 import expressPino from 'express-pino-logger';
@@ -137,7 +138,7 @@ async function storePieceHashes(fileHash: string, pieceLength: number, pieceHash
 }
 
 async function hashPiece(filePath: string, offset: number, length: number): Promise<Buffer> {
-  const fh = await fs.open(filePath, 'r');
+  const fh = await fsPromises.open(filePath, 'r');
   try {
     const buffer = Buffer.alloc(length);
     await fh.read(buffer, 0, length, offset);

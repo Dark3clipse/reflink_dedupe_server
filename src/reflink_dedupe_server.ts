@@ -193,7 +193,6 @@ async function getTorrentFiletree(req: Request, res: Response) {
 
     const torrentData = fs.readFileSync(torrentPath);
     const decoded: any = bencode.decode(torrentData);
-    const decodedUTF: any = bencode.decode(torrentData, { encoding: 'utf8' });
 
     const info = decoded.info;
     const pieceLength: number = info['piece length'];
@@ -210,8 +209,12 @@ async function getTorrentFiletree(req: Request, res: Response) {
 
     // Determine if multi-file torrent
     const files: { path: string; length: number }[] = info.files
-    ? info.files.map((f: any) => ({ path: path.join(...f.path), length: f.length }))
-    : [{ path: info.name.toString(), length: info.length }];
+    ? info.files.map((f: any) => {
+      // decode each path component to UTF-8
+      const decodedPath = f.path.map((p: Buffer) => p.toString('utf8'));
+      return { path: path.join(...decodedPath), length: f.length };
+    })
+    : [{ path: info.name.toString('utf8'), length: info.length }];
 
     let globalOffset = 0; // global byte offset in the torrent
 

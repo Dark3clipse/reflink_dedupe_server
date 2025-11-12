@@ -270,8 +270,8 @@ async function getTorrentFiletree(req: Request, res: Response) {
           const torrentHash = pieceHashes.slice((Math.floor(pieceStartGlobal / pieceLength)) * 20,
                                                 (Math.floor(pieceStartGlobal / pieceLength)) * 20 + 20);
 
-          console.log(`[TRACE] piece hash from torrent: ${torrentHash.toString('hex')}`);
-          console.log(`[TRACE] candidate piece hash: ${hash.toString('hex')}`);
+          //console.log(`[TRACE] piece hash from torrent: ${torrentHash.toString('hex')}`);
+          //console.log(`[TRACE] candidate piece hash: ${hash.toString('hex')}`);
 
           if (!hash.equals(torrentHash)) {
             console.log(`[TRACE] Piece ${i} mismatch for candidate ${candidatePath}`);

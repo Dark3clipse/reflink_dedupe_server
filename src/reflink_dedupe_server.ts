@@ -118,7 +118,48 @@ async function deleteTorrent(req: Request, res: Response) {
 }
 
 async function getTorrentMetadata(req: Request, res: Response) {
-  res.json({ id: req.params.id, name: 'Torrent Name', size: 12345, fileCount: 1 });
+  const { id } = req.params;
+  const torrentPath = path.join(torrentsDir, `${id}.torrent`);
+
+  try {
+    if (!fs.existsSync(torrentPath)) {
+      return res.status(404).json({ error: `Torrent with ID ${id} not found` });
+    }
+
+    // Read and parse torrent
+    const torrentData = fs.readFileSync(torrentPath);
+    const decoded = bencode.decode(torrentData) as any;
+
+    // Torrent name
+    let name = decoded.info?.name?.toString() || `Torrent-${id}`;
+
+    // List of files and total size
+    let files = [];
+    let totalSize = 0;
+
+    if (decoded.info?.files) {
+      // Multi-file torrent
+      files = decoded.info.files.map((f: any) => ({
+        path: f.path.map((p: Buffer) => p.toString()).join('/'),
+                                                  size: f.length
+      }));
+      totalSize = files.reduce((acc: number, f: any) => acc + f.size, 0);
+    } else if (decoded.info?.length) {
+      // Single-file torrent
+      files = [{ path: name, size: decoded.info.length }];
+      totalSize = decoded.info.length;
+    }
+
+    res.json({
+      id,
+      name,
+      size: totalSize,
+      fileCount: files.length
+    });
+  } catch (err) {
+    console.error('Failed to read torrent metadata:', err);
+    res.status(500).json({ error: 'Failed to read torrent metadata' });
+  }
 }
 
 async function getTorrentFiletree(req: Request, res: Response) {

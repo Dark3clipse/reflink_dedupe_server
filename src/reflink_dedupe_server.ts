@@ -64,7 +64,7 @@ function sendJSON(res: http.ServerResponse, status: number, data: object) {
 async function initDB(): Promise<Database> {
   const database = await open({
     filename: rdConfig.DB,
-    driver: sqlite3.Database,
+    driver: sqlite3.Database
   });
 
   // Ensure schema exists
@@ -99,7 +99,18 @@ async function initDB(): Promise<Database> {
     CREATE INDEX IF NOT EXISTS idx_files_hash_size_path ON files(hash, file_size, path);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_duplicates_pair ON duplicates(original, duplicate);
     CREATE INDEX IF NOT EXISTS idx_duplicates_duplicate ON duplicates(duplicate);
+    PRAGMA journal_mode=WAL;
   `);
+
+  return database;
+}
+
+async function openDbReadonly(): Promise<Database> {
+  const database = await open({
+    filename: rdConfig.DB,
+    driver: sqlite3.Database,
+    mode: sqlite3.OPEN_READONLY
+  });
 
   return database;
 }
@@ -240,7 +251,7 @@ async function handleHash(req: http.IncomingMessage, res: http.ServerResponse) {
 async function main() {
   rdConfig = loadRdConfig('/usr/local/etc/reflink_dedupe.conf');
   serverConfig = loadServerConfig('/usr/local/etc/reflink_dedupe_server.conf');
-  db = await initDB();
+  db = await openDbReadonly();
 
   console.log(`[${new Date().toISOString()}] Reflink Dedupe Server started on port ${serverConfig.PORT}`);
   console.log(`Root path: ${rdConfig.DEDUPLICATION_ROOT}`);

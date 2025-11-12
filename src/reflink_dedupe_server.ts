@@ -223,7 +223,7 @@ async function getTorrentFiletree(req: Request, res: Response) {
       return { path: filePath, length: f.length };
     })
     : (() => {
-      const filePath = info.name.toString('utf8');
+      const filePath = Buffer.isBuffer(info.name) ? info.name.toString('utf8') : String(info.name);
       console.log(`[TRACE] Single-file torrent path: ${filePath}, length: ${info.length}`);
       return [{ path: filePath, length: info.length }];
     })();

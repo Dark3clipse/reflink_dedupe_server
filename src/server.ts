@@ -12,6 +12,7 @@ import { makeAuthMiddleware } from './utils/auth.ts';
 import { makeRequestIdMiddleware } from './utils/requestId.ts';
 import { initConfig } from './utils/config.ts';
 import type { AppConfig } from './utils/config.ts';
+import { initPaths } from './utils/paths.ts';
 import { initDatabases } from './db/index.ts';
 import { uploadTorrent } from './paths/torrent/upload.ts';
 import { deleteTorrent } from './paths/torrent/delete.ts';
@@ -20,10 +21,12 @@ import { getTorrentFiletree } from './paths/torrent/filetree.ts';
 import { reportDuplicate } from './paths/duplicates/report.ts';
 import { createDuplicate } from './paths/duplicates/create.ts';
 
+
 const upload = multer({ storage: multer.memoryStorage() });
 
 async function main() {
   const appConfig = initConfig();
+  const paths = initPaths();
 
   const torrentsDir = path.join(appConfig.server.TMP_DIR, 'torrents');
   fs.mkdirSync(torrentsDir, { recursive: true });

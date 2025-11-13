@@ -23,7 +23,7 @@ export async function hashPiece(filePath: string, offset: number, length: number
  * Get cached piece hashes from memory or the DB.
  */
 export async function getCachedPieceHashes(fileHash: string, pieceLength: number, lastChecked: number): Promise<Map<number, string>> {
-    const rows = await getServerDatabase().all('SELECT piece_index, piece_hash FROM file_pieces WHERE file_hash = ? AND piece_length = ? AND last_checked = ?', fileHash, pieceLength, last_checked);
+    const rows = await getServerDatabase().all('SELECT piece_index, piece_hash FROM file_pieces WHERE file_hash = ? AND piece_length = ? AND last_checked = ?', fileHash, pieceLength, lastChecked);
     const map = new Map<number, string>();
     for (const row of rows) map.set(row.piece_index, row.piece_hash);
     return map;

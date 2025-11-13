@@ -15,3 +15,14 @@ export function tracedRoute(fn: Function, name?: string) {
         }
     };
 }
+
+export function makeResponseBodyMiddleware() {
+    return function responseBodyMiddleware(req: Request, res: Response, next: NextFunction) {
+        const oldJson = res.json;
+        res.json = function (body) {
+            logger.trace({ url: req.originalUrl, body }, 'Response JSON');
+            return oldJson.call(this, body);
+        };
+        next();
+    };
+}

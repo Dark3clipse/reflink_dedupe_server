@@ -7,8 +7,9 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { logger } from './logger.ts';
-import { tracedRoute } from './utils/traceRoute.ts';
+import { tracedRoute, makeResponseBodyMiddleware } from './utils/traceRoute.ts';
 import { makeAuthMiddleware } from './utils/auth.ts';
+import { makeRequestIdMiddleware } from './utils/requestId.ts';
 import { initConfig } from './utils/config.ts';
 import type { AppConfig } from './utils/config.ts';
 import { initDatabases } from './db/index.ts';
@@ -31,18 +32,11 @@ async function main() {
 
   const app = express();
   app.use(expressPino({ logger }));
-  app.use(express.tson());
+  app.use(express.json());
+  app.use(makeRequestIdMiddleware());
   app.use(makeAuthMiddleware(appConfig.server));
-
   if (logger.level === 'trace') {
-    app.use((req, res, next) => {
-      const oldJson = res.tson;
-      res.tson = function (body) {
-        logger.trace({ url: req.originalUrl, body }, 'Response JSON');
-        return oldJson.call(this, body);
-      };
-      next();
-    });
+    app.use(makeResponseBodyMiddleware());
   }
 
   const specPath = path.resolve('./openapi/openapi.yaml');

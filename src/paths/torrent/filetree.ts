@@ -122,10 +122,10 @@ export async function getTorrentFiletree(req: Request, res: Response) {
                 const cachedPieces = await getCachedPieceHashes(fileHash, pieceLength);
                 const pieceCount = Math.ceil(f.length / pieceLength);
                 let matched = true;
-                const computedPieces: Buffer[] = computePieces(candidatePath, fileHash, pieceLength, pieceCount, cachedPieces, globalOffset, pieceHashes);
+                const computedPieces: Buffer[] = await computePieces(candidatePath, fileHash, pieceLength, pieceCount, cachedPieces, globalOffset, pieceHashes);
 
                 for (let i = 0; i < pieceCount; i++) {
-                    const pieceHash = Buffer.from(computedPieces[i]!, 'hex');
+                    const pieceHash = Buffer.from(computedPieces[i], 'hex');
                     const pieceStartGlobal = globalOffset + i * pieceLength;
                     const pieceEndGlobal = Math.min(pieceStartGlobal + pieceLength, globalOffset + f.length);
                     const readLength = pieceEndGlobal - pieceStartGlobal;

@@ -119,9 +119,7 @@ export async function getTorrentFiletree(req: Request, res: Response) {
                 const cachedPieces = await getCachedPieceHashes(fileHash, pieceLength);
                 const pieceCount = Math.ceil(f.length / pieceLength);
                 let matched = true;
-                const computedPieces: Buffer[] = [];
-
-                computeAndCacheMissingPieces(candidatePath, fileHash, pieceLength, pieceCount, cachedPieces, globalOffset, pieceHashes);
+                const computedPieces: Buffer[] = computeAndCacheMissingPieces(candidatePath, fileHash, pieceLength, pieceCount, cachedPieces, globalOffset, pieceHashes);
                 logger.trace(`  ${c.path} (hash: ${c.hash}) = ${matched?"HIT":"MISS"}`);
 
                 if (matched) {

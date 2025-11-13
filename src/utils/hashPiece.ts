@@ -10,8 +10,10 @@ export async function hashPiece(filePath: string, offset: number, length: number
     const fh = await fsPromises.open(filePath, 'r');
     try {
         const buffer = Buffer.alloc(length);
-        await fh.read(buffer, 0, length, offset);
-        return crypto.createHash('sha1').update(buffer).digest('hex');
+        const { bytesRead } = await fh.read(buffer, 0, length, offset);
+        return crypto.createHash('sha1')
+        .update(buffer.subarray(0, bytesRead))
+        .digest('hex');
     } finally {
         await fh.close();
     }

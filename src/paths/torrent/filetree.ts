@@ -134,6 +134,7 @@ export async function getTorrentFiletree(req: Request, res: Response) {
                         .subarray((globalPieceIndex + i) * 20, (globalPieceIndex + i + 1) * 20)
                         .toString('hex');
 
+                    logger.trace(`  filePieceHash=${filePieceHash}, torrentPieceHash=${torrentPieceHash}`);
                     if (filePieceHash != torrentPieceHash) {
                         logger.trace(`  filePieceHash=${filePieceHash}, torrentPieceHash=${torrentPieceHash}`);
                         matched = false;

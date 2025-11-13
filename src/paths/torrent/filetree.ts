@@ -123,16 +123,19 @@ export async function getTorrentFiletree(req: Request, res: Response) {
                 const pieceCount = Math.ceil(f.length / pieceLength);
                 let matched = true;
                 const computedPieces: string[] = await computePieces(candidatePath, fileHash, pieceLength, pieceCount, cachedPieces, globalOffset, pieceHashes);
+                console.log(computedPieces);
+                res.status(500).json({ error: 'Failed to build torrent filetree' });
+                return;
 
                 for (let i = 0; i < pieceCount; i++) {
-                    const pieceHash = computedPieces[i];
+                    const filePieceHash = computedPieces[i];
                     const pieceStartGlobal = globalOffset + i * pieceLength;
                     const pieceEndGlobal = Math.min(pieceStartGlobal + pieceLength, globalOffset + f.length);
                     const readLength = pieceEndGlobal - pieceStartGlobal;
-                    const torrentHash = Buffer.from(pieceHashes.slice((Math.floor(pieceStartGlobal / pieceLength)) * 20,
+                    const torrentPieceHash = Buffer.from(pieceHashes.slice((Math.floor(pieceStartGlobal / pieceLength)) * 20,
                                                           (Math.floor(pieceStartGlobal / pieceLength)) * 20 + 20)).toString('utf8');
-                    if (pieceHash != torrentHash) {
-                        logger.trace(`  pieceHash=${pieceHash}, torrentHash=${torrentHash}`);
+                    if (filePieceHash != torrentPieceHash) {
+                        logger.trace(`  filePieceHash=${filePieceHash}, torrentPieceHash=${torrentPieceHash}`);
                         matched = false;
                         break;
                     }

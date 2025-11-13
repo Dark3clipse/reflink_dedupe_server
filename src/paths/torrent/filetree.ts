@@ -19,7 +19,7 @@ interface FileTreeEntry {
     locations: string[];
 }
 
-async function computeAndCacheMissingPieces(
+async function computePieces(
     filePath: string,
     fileHash: string,
     pieceLength: number,
@@ -32,7 +32,10 @@ async function computeAndCacheMissingPieces(
     const tasks: Promise<void>[] = [];
 
     for (let i = 0; i < pieceCount; i++) {
-        if (cachedPieces.has(i)) continue;
+        if (cachedPieces.has(i)) {
+            computedPieces[i] = cachedPieces.get(i);
+            continue;
+        }
 
         const pieceStartGlobal = globalOffset + i * pieceLength;
         const pieceEndGlobal = pieceStartGlobal + pieceLength;
@@ -119,7 +122,21 @@ export async function getTorrentFiletree(req: Request, res: Response) {
                 const cachedPieces = await getCachedPieceHashes(fileHash, pieceLength);
                 const pieceCount = Math.ceil(f.length / pieceLength);
                 let matched = true;
-                const computedPieces: Buffer[] = computeAndCacheMissingPieces(candidatePath, fileHash, pieceLength, pieceCount, cachedPieces, globalOffset, pieceHashes);
+                const computedPieces: Buffer[] = computePieces(candidatePath, fileHash, pieceLength, pieceCount, cachedPieces, globalOffset, pieceHashes);
+
+                for (let i = 0; i < pieceCount; i++) {
+                    const pieceHash = Buffer.from(computedPieces.get(i)!, 'hex');
+                    const pieceStartGlobal = globalOffset + i * pieceLength;
+                    const pieceEndGlobal = Math.min(pieceStartGlobal + pieceLength, globalOffset + f.length);
+                    const readLength = pieceEndGlobal - pieceStartGlobal;
+                    const torrentHash = pieceHashes.slice((Math.floor(pieceStartGlobal / pieceLength)) * 20,
+                                                          (Math.floor(pieceStartGlobal / pieceLength)) * 20 + 20);
+                    if (!pieceHash.equals(torrentHash)) {
+                        matched = false;
+                        break;
+                    }
+                }
+
                 logger.trace(`  ${c.path} (hash: ${c.hash}) = ${matched?"HIT":"MISS"}`);
 
                 if (matched) {

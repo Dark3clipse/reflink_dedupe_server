@@ -6,12 +6,12 @@ import { logger } from '../logger.ts';
 /**
  * Compute a SHA1 hash of a specific file region (torrent piece).
  */
-export async function hashPiece(filePath: string, offset: number, length: number): Promise<Buffer> {
+export async function hashPiece(filePath: string, offset: number, length: number): Promise<string> {
     const fh = await fsPromises.open(filePath, 'r');
     try {
         const buffer = Buffer.alloc(length);
         await fh.read(buffer, 0, length, offset);
-        return crypto.createHash('sha1').update(buffer).digest();
+        return crypto.createHash('sha1').update(buffer).digest().toString('utf8');
     } finally {
         await fh.close();
     }

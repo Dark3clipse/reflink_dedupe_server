@@ -2,11 +2,11 @@
   "name": "reflink_dedupe_server",
   "version": "1.0.0",
   "description": "`reflink_dedupe_server` is a FreeBSD utility for deduplicating files on filesystems that support copy-on-write reflinks. This is the server component that allows external programs to retrieve or modify the state of the filesystem.",
-  "main": "index.js",
+  "main": "server.js",
   "type": "module",
   "scripts": {
-    "start": "NODE_ENV=production node dist/reflink_dedupe_server.js",
-    "dev": "NODE_ENV=development ts-node-esm src/reflink_dedupe_server.ts",
+    "start": "NODE_ENV=production node dist/server.js",
+    "dev": "NODE_ENV=development ts-node-esm src/server.ts",
     "build": "tsc"
   },
   "keywords": [],

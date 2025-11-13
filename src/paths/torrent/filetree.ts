@@ -129,8 +129,11 @@ export async function getTorrentFiletree(req: Request, res: Response) {
                     const pieceStartGlobal = globalOffset + i * pieceLength;
                     const pieceEndGlobal = Math.min(pieceStartGlobal + pieceLength, globalOffset + f.length);
                     const readLength = pieceEndGlobal - pieceStartGlobal;
-                    const torrentPieceHash = Buffer.from(pieceHashes.slice((Math.floor(pieceStartGlobal / pieceLength)) * 20,
-                                                          (Math.floor(pieceStartGlobal / pieceLength)) * 20 + 20)).toString('hex');
+                    const globalPieceIndex = Math.floor(globalOffset / pieceLength);
+                    const torrentPieceHash = pieceHashes
+                        .subarray((globalPieceIndex + i) * 20, (globalPieceIndex + i + 1) * 20)
+                        .toString('hex');
+
                     if (filePieceHash != torrentPieceHash) {
                         logger.trace(`  filePieceHash=${filePieceHash}, torrentPieceHash=${torrentPieceHash}`);
                         matched = false;

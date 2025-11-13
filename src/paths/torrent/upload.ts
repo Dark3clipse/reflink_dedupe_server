@@ -1,5 +1,6 @@
 import fs from 'fs';
 import crypto from 'crypto';
+import path from 'path';
 import type { Request, Response } from 'express';
 import { logger } from '../../logger.ts';
 import { getPaths } from '../../utils/paths.ts';

@@ -20,6 +20,7 @@ export async function openServerDb(dbPath: string): Promise<Database> {
         piece_length INTEGER NOT NULL,
         piece_index INTEGER NOT NULL,
         piece_hash TEXT NOT NULL,
+        last_checked INTEGER,
         PRIMARY KEY (file_hash, piece_length, piece_index)
     );
     CREATE INDEX IF NOT EXISTS idx_file_pieces_hash_piece_length ON file_pieces(file_hash, piece_length);

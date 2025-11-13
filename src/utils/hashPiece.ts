@@ -22,8 +22,8 @@ export async function hashPiece(filePath: string, offset: number, length: number
 /**
  * Get cached piece hashes from memory or the DB.
  */
-export async function getCachedPieceHashes(fileHash: string, pieceLength: number): Promise<Map<number, string>> {
-    const rows = await getServerDatabase().all('SELECT piece_index, piece_hash FROM file_pieces WHERE file_hash = ? AND piece_length = ?', fileHash, pieceLength);
+export async function getCachedPieceHashes(fileHash: string, pieceLength: number, lastChecked: number): Promise<Map<number, string>> {
+    const rows = await getServerDatabase().all('SELECT piece_index, piece_hash FROM file_pieces WHERE file_hash = ? AND piece_length = ? AND last_checked = ?', fileHash, pieceLength, last_checked);
     const map = new Map<number, string>();
     for (const row of rows) map.set(row.piece_index, row.piece_hash);
     return map;
@@ -32,13 +32,13 @@ export async function getCachedPieceHashes(fileHash: string, pieceLength: number
 /**
  * Store piece hashes asynchronously after the response has been sent.
  */
-export async function storePieceHashes(fileHash: string, pieceLength: number, pieceHashes: Buffer[]) {
+export async function storePieceHashes(fileHash: string, pieceLength: number, pieceHashes: Buffer[], lastChecked: number) {
     const insert = await getServerDatabase().prepare(`
-    INSERT OR IGNORE INTO file_pieces (file_hash, piece_length, piece_index, piece_hash)
-    VALUES (?, ?, ?, ?)
+    INSERT OR IGNORE INTO file_pieces (file_hash, piece_length, piece_index, piece_hash, last_checked)
+    VALUES (?, ?, ?, ?, ?)
     `);
     for (let i = 0; i < pieceHashes.length; i++) {
-        await insert.run(fileHash, pieceLength, i, pieceHashes[i].toString('hex'));
+        await insert.run(fileHash, pieceLength, i, pieceHashes[i].toString('hex'), lastChecked);
     }
     await insert.finalize();
 }

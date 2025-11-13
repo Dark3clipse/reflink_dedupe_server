@@ -106,7 +106,7 @@ export async function getTorrentFiletree(req: Request, res: Response) {
             const locations: string[] = [];
 
             // Get candidate files from DB by size
-            const candidates = await getMainDatabase().all('SELECT path, hash FROM files WHERE file_size = ?', f.length);
+            const candidates = await getMainDatabase().all('SELECT path, hash, last_checked FROM files WHERE file_size = ?', f.length);
             logger.trace(`Found ${candidates.length} candidates by size:`);
             //TODO: limit maximum candidates / low file sizes
             //TODO: sort candidates on heuristic
@@ -119,7 +119,7 @@ export async function getTorrentFiletree(req: Request, res: Response) {
                     continue;
                 }
                 const fileHash = c.hash;
-                const cachedPieces = await getCachedPieceHashes(fileHash, pieceLength);
+                const cachedPieces = await getCachedPieceHashes(fileHash, pieceLength, c.last_checked);
                 const pieceCount = Math.ceil(f.length / pieceLength);
                 let matched = true;
                 const computedPieces: string[] = await computePieces(candidatePath, fileHash, pieceLength, pieceCount, cachedPieces, globalOffset, pieceHashes);
@@ -134,9 +134,8 @@ export async function getTorrentFiletree(req: Request, res: Response) {
                         .subarray((globalPieceIndex + i) * 20, (globalPieceIndex + i + 1) * 20)
                         .toString('hex');
 
-                    logger.trace(`  filePieceHash=${filePieceHash}, torrentPieceHash=${torrentPieceHash}`);
                     if (filePieceHash != torrentPieceHash) {
-                        logger.trace(`  filePieceHash=${filePieceHash}, torrentPieceHash=${torrentPieceHash}`);
+                        logger.trace(`  [${i}] filePieceHash=${filePieceHash}, torrentPieceHash=${torrentPieceHash}`);
                         matched = false;
                         break;
                     }
@@ -148,7 +147,7 @@ export async function getTorrentFiletree(req: Request, res: Response) {
                     locations.push(candidatePath);
                     setImmediate(async () => {
                         try {
-                            await storePieceHashes(fileHash, pieceLength, computedPieces);
+                            await storePieceHashes(fileHash, pieceLength, computedPieces, c.last_checked);
                         } catch (err) {
                             logger.error({ err }, 'Failed to store piece hashes');
                         }

@@ -123,9 +123,6 @@ export async function getTorrentFiletree(req: Request, res: Response) {
                 const pieceCount = Math.ceil(f.length / pieceLength);
                 let matched = true;
                 const computedPieces: string[] = await computePieces(candidatePath, fileHash, pieceLength, pieceCount, cachedPieces, globalOffset, pieceHashes);
-                console.log(computedPieces);
-                res.status(500).json({ error: 'Failed to build torrent filetree' });
-                return;
 
                 for (let i = 0; i < pieceCount; i++) {
                     const filePieceHash = computedPieces[i];

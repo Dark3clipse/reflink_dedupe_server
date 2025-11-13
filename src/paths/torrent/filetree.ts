@@ -19,11 +19,41 @@ interface FileTreeEntry {
     locations: string[];
 }
 
+async function computeAndCacheMissingPieces(
+    filePath: string,
+    fileHash: string,
+    pieceLength: number,
+    pieceCount: number,
+    cachedPieces: Map<number, string>,
+    globalOffset: number,
+    torrentPieceHashes: Buffer
+): Promise<Buffer[]> {
+    const computedPieces: Buffer[] = [];
+    const tasks: Promise<void>[] = [];
+
+    for (let i = 0; i < pieceCount; i++) {
+        if (cachedPieces.has(i)) continue;
+
+        const pieceStartGlobal = globalOffset + i * pieceLength;
+        const pieceEndGlobal = pieceStartGlobal + pieceLength;
+        const readLength = pieceEndGlobal - pieceStartGlobal;
+
+        tasks.push(
+            limit(async () => {
+                const pieceHash = await hashPiece(filePath, i * pieceLength, readLength);
+                computedPieces[i] = pieceHash;
+            })
+        );
+    }
+
+    await Promise.all(tasks);
+    return computedPieces.filter(Boolean);
+}
+
 export async function getTorrentFiletree(req: Request, res: Response) {
     try {
         // Prepare paths
         const torrentId = req.params.id;
-        const rdRoot = getConfig().rd.DEDUPLICATION_ROOT;
         const torrentPath = path.join(getPaths().torrents, `${torrentId}.torrent`);
 
         // Parse torrent metadata
@@ -72,50 +102,30 @@ export async function getTorrentFiletree(req: Request, res: Response) {
         return;
 
         for (const f of files) {
+            logger.trace(`Processing torrent file: ${f.path} (size: ${f.length})`);
             const locations: string[] = [];
+
+            // Get candidate files from DB by size
             const candidates = await getMainDatabase().all('SELECT path, hash FROM files WHERE file_size = ?', f.length);
+            logger.trace(`Found ${candidates.length} candidates by size:`);
+            //TODO: limit maximum candidates / low file sizes
+            //TODO: sort candidates on heuristic
+
 
             for (const c of candidates) {
-                const candidatePath = path.isAbsolute(c.path)
-                ? c.path
-                : path.join(rdRoot, c.path);
-                if (!fs.existsSync(candidatePath)) continue;
-
+                const candidatePath = path.isAbsolute(c.path) ? c.path : path.join(getConfig().rd.DEDUPLICATION_ROOT, c.path);
+                if (!fs.existsSync(candidatePath)) {
+                    logger.trace(`  ${c.path} (hash: ${c.hash}) = MISS`);
+                    continue;
+                }
                 const fileHash = c.hash;
                 const cachedPieces = await getCachedPieceHashes(fileHash, pieceLength);
                 const pieceCount = Math.ceil(f.length / pieceLength);
                 let matched = true;
                 const computedPieces: Buffer[] = [];
 
-                const tasks: Promise<void>[] = [];
-                for (let i = 0; i < pieceCount; i++) {
-                    if (cachedPieces.has(i)) continue;
-                    const pieceStartGlobal = globalOffset + i * pieceLength;
-                    const pieceEndGlobal = Math.min(pieceStartGlobal + pieceLength, globalOffset + f.length);
-                    const readLength = pieceEndGlobal - pieceStartGlobal;
-
-                    tasks.push(
-                        limit(async () => {
-                            const hash = await hashPiece(candidatePath, i * pieceLength, readLength);
-                            computedPieces[i] = hash;
-                        })
-                    );
-                }
-                await Promise.all(tasks);
-
-                const torrentPieceHashes = [];
-                for (let i = 0; i < pieceCount; i++) {
-                    const torrentHash = pieceHashes.subarray((Math.floor((globalOffset + i * pieceLength) / pieceLength)) * 20, (Math.floor((globalOffset + i * pieceLength) / pieceLength)) * 20 + 20);
-                    const candidatePieceHash = cachedPieces.has(i)
-                    ? Buffer.from(cachedPieces.get(i)!, 'hex')
-                    : computedPieces[i];
-
-                    if (!candidatePieceHash.equals(torrentHash)) {
-                        matched = false;
-                        break;
-                    }
-                    torrentPieceHashes.push(candidatePieceHash);
-                }
+                computeAndCacheMissingPieces(candidatePath, fileHash, pieceLength, pieceCount, cachedPieces, globalOffset, pieceHashes);
+                logger.trace(`  ${c.path} (hash: ${c.hash}) = ${matched?"HIT":"MISS"}`);
 
                 if (matched) {
                     locations.push(candidatePath);

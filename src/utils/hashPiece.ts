@@ -11,7 +11,7 @@ export async function hashPiece(filePath: string, offset: number, length: number
     try {
         const buffer = Buffer.alloc(length);
         await fh.read(buffer, 0, length, offset);
-        return crypto.createHash('sha1').update(buffer).digest().toString('utf8');
+        return crypto.createHash('sha1').update(buffer).digest('hex');
     } finally {
         await fh.close();
     }

@@ -3,10 +3,13 @@ import path from 'path';
 import bencode from 'bencode';
 import type { Request, Response } from 'express';
 import crypto from 'crypto';
+import pLimit from 'p-limit';
+import { getPaths } from '../../utils/paths.ts';
+import { getCachedPieceHashes, storePieceHashes, hashPiece } from '../../utils/hashPiece.ts';
 import { getMainDatabase } from '../../db/index.ts';
 import { logger } from '../../logger.ts';
-import { getCachedPieceHashes, storePieceHashes, hashPiece } from '../../utils/hashPiece.ts';
-import pLimit from 'p-limit';
+import { getConfig } from '../../utils/config.ts';
+import type { AppConfig } from '../../utils/config.ts';
 
 const limit = pLimit(8);
 
@@ -18,34 +21,55 @@ interface FileTreeEntry {
 
 export async function getTorrentFiletree(req: Request, res: Response) {
     try {
+        // Prepare paths
         const torrentId = req.params.id;
-        const torrentsDir = process.env.TMP_TORRENTS_DIR!;
-        const rdRoot = process.env.DEDUP_ROOT!;
-        const torrentPath = path.join(torrentsDir, `${torrentId}.torrent`);
+        const rdRoot = getConfig().rd.DEDUPLICATION_ROOT;
+        const torrentPath = path.join(getPaths().torrents, `${torrentId}.torrent`);
 
-        logger.trace({ torrentPath }, 'Processing torrent filetree');
-
+        // Parse torrent metadata
+        logger.trace(`Loading torrent ${torrentPath}`);
         const torrentData = fs.readFileSync(torrentPath);
         const decoded: any = bencode.decode(torrentData);
         const info = decoded.info;
         const pieceLength: number = info['piece length'];
-        let pieceHashes: Buffer;
+        const pieceHashes: Buffer = typeof info.pieces === 'string' ? Buffer.from(info.pieces, 'latin1') : Buffer.from(info.pieces);
+        const files: { path: string; length: number }[] = info.files
+        ? info.files.map((f: any, idx: number) => {
+            //logger.trace(`[TRACE] Decoding multi-file path #${idx}`);
+            const pathComponents = f.path.map((p: Buffer, compIdx: number) => {
+                const str = p.toString('utf8');
+                //logger.trace(`[TRACE] Path component ${compIdx}: ${str}`);
+                return str;
+            });
+            const filePath = pathComponents.join('/');
+            //logger.trace(`[TRACE] Full file path: ${filePath}, length: ${f.length}`);
+            return { path: filePath, length: f.length };
+        })
+        : (() => {
+            let filePath;
+            if (info.name instanceof Uint8Array) {
+                filePath = Buffer.from(info.name).toString('utf8');
+            }else{
+                filePath = String(info.name);
+            }
+            //logger.trace(`[TRACE] Single-file torrent path: ${filePath}, length: ${info.length}`);
+            return [{ path: filePath, length: info.length }];
+        })();
 
-        if (typeof info.pieces === 'string') {
-            pieceHashes = Buffer.from(info.pieces, 'latin1');
-        } else {
-            pieceHashes = Buffer.from(info.pieces);
+        logger.trace(`Torrent metadata parsed:`);
+        logger.trace(`  piece length: ${pieceLength}`);
+        logger.trace(`  total pieces: ${pieceHashes.length / 20}`);
+        logger.trace(`  files:`);
+        for (const f of files) {
+            logger.trace(`    ${f.path} (size: ${f.length})`);
         }
 
-        const files: { path: string; length: number }[] = info.files
-        ? info.files.map((f: any) => ({
-            path: f.path.map((p: Buffer) => p.toString('utf8')).join('/'),
-                                      length: f.length,
-        }))
-        : [{ path: info.name.toString('utf8'), length: info.length }];
-
+        // Prepare loop
         const filetree: FileTreeEntry[] = [];
         let globalOffset = 0;
+
+        res.status(500).json({ error: 'Failed to build torrent filetree' });
+        return;
 
         for (const f of files) {
             const locations: string[] = [];

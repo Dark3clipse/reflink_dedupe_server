@@ -1,13 +1,13 @@
 import fs from 'fs';
 import path from 'path';
+import { getPaths } from '../../utils/paths.ts';
 import type { Request, Response } from 'express';
 import bencode from 'bencode';
 import { logger } from '../../logger.ts';
 
 export async function getTorrentMetadata(req: Request, res: Response) {
     const { id } = req.params;
-    const torrentsDir = process.env.TMP_TORRENTS_DIR!;
-    const torrentPath = path.join(torrentsDir, `${id}.torrent`);
+    const torrentPath = path.join(getPaths().torrents, `${id}.torrent`);
 
     try {
         if (!fs.existsSync(torrentPath)) {

@@ -98,9 +98,6 @@ export async function getTorrentFiletree(req: Request, res: Response) {
         const filetree: FileTreeEntry[] = [];
         let globalOffset = 0;
 
-        res.status(500).json({ error: 'Failed to build torrent filetree' });
-        return;
-
         for (const f of files) {
             logger.trace(`Processing torrent file: ${f.path} (size: ${f.length})`);
             const locations: string[] = [];

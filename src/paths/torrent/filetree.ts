@@ -132,6 +132,7 @@ export async function getTorrentFiletree(req: Request, res: Response) {
                     const torrentHash = pieceHashes.slice((Math.floor(pieceStartGlobal / pieceLength)) * 20,
                                                           (Math.floor(pieceStartGlobal / pieceLength)) * 20 + 20);
                     if (!pieceHash.equals(torrentHash)) {
+                        logger.trace(`  pieceHash=${pieceHash}, torrentHash=${torrentHash}`);
                         matched = false;
                         break;
                     }

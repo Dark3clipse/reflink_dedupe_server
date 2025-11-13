@@ -1,4 +1,5 @@
 import path from 'path';
+import fs from 'fs';
 import { getConfig } from './config.ts';
 import type { AppConfig } from './config.ts';
 
@@ -15,6 +16,8 @@ export function initPaths(): Paths {
     paths = {
         torrents: path.join(cfg.server.TMP_DIR, 'torrents')
     }
+
+    fs.mkdirSync(paths.torrents, { recursive: true });
 
     return paths;
 }

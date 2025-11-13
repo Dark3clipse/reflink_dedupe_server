@@ -27,10 +27,6 @@ const upload = multer({ storage: multer.memoryStorage() });
 async function main() {
   const appConfig = initConfig();
   const paths = initPaths();
-
-  const torrentsDir = path.join(appConfig.server.TMP_DIR, 'torrents');
-  fs.mkdirSync(torrentsDir, { recursive: true });
-
   initDatabases();
 
   const app = express();
@@ -48,8 +44,8 @@ async function main() {
 
   // Routes
   app.post('/torrent/upload', upload.single('torrentFile'), tracedRoute(uploadTorrent, 'uploadTorrent'));
-  /*app.delete('/torrent/:id', tracedRoute(deleteTorrent, 'deleteTorrent'));
-  app.get('/torrent/:id', tracedRoute(getTorrentMetadata, 'getTorrentMetadata'));
+  app.delete('/torrent/:id', tracedRoute(deleteTorrent, 'deleteTorrent'));
+  /*app.get('/torrent/:id', tracedRoute(getTorrentMetadata, 'getTorrentMetadata'));
   app.get('/torrent/:id/filetree', tracedRoute(getTorrentFiletree, 'getTorrentFiletree'));
   app.post('/duplicates/report', tracedRoute(reportDuplicate, 'reportDuplicate'));
   app.post('/duplicates/create', tracedRoute(createDuplicate, 'createDuplicate'));*/

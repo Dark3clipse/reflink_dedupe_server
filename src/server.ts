@@ -44,8 +44,8 @@ async function main() {
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
 
   // Routes
-  /*app.post('/torrent/upload', upload.single('torrentFile'), tracedRoute(uploadTorrent, 'uploadTorrent'));
-  app.delete('/torrent/:id', tracedRoute(deleteTorrent, 'deleteTorrent'));
+  app.post('/torrent/upload', upload.single('torrentFile'), tracedRoute(uploadTorrent, 'uploadTorrent'));
+  /*app.delete('/torrent/:id', tracedRoute(deleteTorrent, 'deleteTorrent'));
   app.get('/torrent/:id', tracedRoute(getTorrentMetadata, 'getTorrentMetadata'));
   app.get('/torrent/:id/filetree', tracedRoute(getTorrentFiletree, 'getTorrentFiletree'));
   app.post('/duplicates/report', tracedRoute(reportDuplicate, 'reportDuplicate'));

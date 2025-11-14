@@ -89,7 +89,7 @@ export async function getTorrentFiletree(req: Request, res: Response) {
             return [{ path: filePath, length: info.length }];
         })();
         const name: string = Buffer.from(info.name).toString('utf8');
-        logger.trace(typeof info['name']);
+
         logger.trace(`Torrent metadata parsed:`);
         logger.trace(`  name: ${name}`);
         logger.trace(`  piece length: ${pieceLength}`);

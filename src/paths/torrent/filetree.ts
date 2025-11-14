@@ -73,7 +73,7 @@ export async function getTorrentFiletree(req: Request, res: Response) {
         ? info.files.map((f: any, idx: number) => {
             //logger.trace(`[TRACE] Decoding multi-file path #${idx}`);
             const pathComponents = f.path.map((p: Buffer, compIdx: number) => {
-                const str = p.toString('utf8');
+                const str = Buffer.from(p).toString('utf8');
                 //logger.trace(`[TRACE] Path component ${compIdx}: ${str}`);
                 return str;
             });
@@ -83,11 +83,7 @@ export async function getTorrentFiletree(req: Request, res: Response) {
         })
         : (() => {
             let filePath;
-            if (info.name instanceof Uint8Array) {
-                filePath = Buffer.from(info.name).toString('utf8');
-            }else{
-                filePath = String(info.name);
-            }
+            filePath = Buffer.from(info.name).toString('utf8');
             //logger.trace(`[TRACE] Single-file torrent path: ${filePath}, length: ${info.length}`);
             singleFile = true;
             return [{ path: filePath, length: info.length }];

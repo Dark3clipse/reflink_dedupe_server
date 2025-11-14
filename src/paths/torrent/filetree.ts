@@ -5,11 +5,13 @@ import type { Request, Response } from 'express';
 import crypto from 'crypto';
 import pLimit from 'p-limit';
 import { getPaths } from '../../utils/paths.ts';
-import { getCachedPieceHashes, storePieceHashes, hashPiece } from '../../utils/hashPiece.ts';
+import { getCachedPieceHashes, storePieceHashes, hashPiece, hashPieceMulti } from '../../utils/hashPiece.ts';
 import { getMainDatabase } from '../../db/index.ts';
 import { logger } from '../../logger.ts';
 import { getConfig } from '../../utils/config.ts';
 import type { AppConfig } from '../../utils/config.ts';
+import { matchTorrentFiles } from '../../algorithms/torrentMatcher.ts'
+import type { TorrentInfo } from '../../algorithms/torrentMatcher.ts'
 
 const limit = pLimit(8);
 
@@ -32,7 +34,7 @@ async function computePieces(
     const tasks: Promise<void>[] = [];
 
     for (let i = 0; i < pieceCount; i++) {
-        if (cachedPieces.has(i)) {
+        if (cachedPieces != null && cachedPieces.has(i)) {
             computedPieces[i] = cachedPieces.get(i);
             continue;
         }
@@ -66,6 +68,7 @@ export async function getTorrentFiletree(req: Request, res: Response) {
         const info = decoded.info;
         const pieceLength: number = info['piece length'];
         const pieceHashes: Buffer = typeof info.pieces === 'string' ? Buffer.from(info.pieces, 'latin1') : Buffer.from(info.pieces);
+        let singleFile: Boolean = false;
         const files: { path: string; length: number }[] = info.files
         ? info.files.map((f: any, idx: number) => {
             //logger.trace(`[TRACE] Decoding multi-file path #${idx}`);
@@ -86,6 +89,7 @@ export async function getTorrentFiletree(req: Request, res: Response) {
                 filePath = String(info.name);
             }
             //logger.trace(`[TRACE] Single-file torrent path: ${filePath}, length: ${info.length}`);
+            singleFile = true;
             return [{ path: filePath, length: info.length }];
         })();
 
@@ -96,6 +100,18 @@ export async function getTorrentFiletree(req: Request, res: Response) {
         for (const f of files) {
             logger.trace(`    ${f.path} (size: ${f.length})`);
         }
+
+        const torrentInfo : TorrentInfo = {
+            pieceLength: pieceLength,
+            pieces: pieceHashes,
+            files: files,
+            name: info['name'],
+        };
+        await matchTorrentFiles(torrentInfo);
+
+        res.status(500).json({ error: 'Not fully implemented.' });
+        return;
+
 
         // Prepare loop
         const filetree: FileTreeEntry[] = [];
@@ -119,7 +135,10 @@ export async function getTorrentFiletree(req: Request, res: Response) {
                     continue;
                 }
                 const fileHash = c.hash;
-                const cachedPieces = await getCachedPieceHashes(fileHash, pieceLength, c.last_checked);
+                let cachedPieces: Map<number, string> = null;
+                if (singleFile) {
+                    cachedPieces = await getCachedPieceHashes(fileHash, pieceLength, c.last_checked);
+                }
                 const pieceCount = Math.ceil(f.length / pieceLength);
                 let matched = true;
                 const computedPieces: string[] = await computePieces(candidatePath, fileHash, pieceLength, pieceCount, cachedPieces, globalOffset, pieceHashes);
@@ -145,13 +164,15 @@ export async function getTorrentFiletree(req: Request, res: Response) {
 
                 if (matched) {
                     locations.push(candidatePath);
-                    setImmediate(async () => {
-                        try {
-                            await storePieceHashes(fileHash, pieceLength, computedPieces, c.last_checked);
-                        } catch (err) {
-                            logger.error({ err }, 'Failed to store piece hashes');
-                        }
-                    });
+                    if (singleFile) {
+                        setImmediate(async () => {
+                            try {
+                                await storePieceHashes(fileHash, pieceLength, computedPieces, c.last_checked);
+                            } catch (err) {
+                                logger.error({ err }, 'Failed to store piece hashes');
+                            }
+                        });
+                    }
                 }
             }
 

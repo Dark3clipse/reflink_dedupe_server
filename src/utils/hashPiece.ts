@@ -20,6 +20,58 @@ export async function hashPiece(filePath: string, offset: number, length: number
 }
 
 /**
+ * Compute SHA1 hash of a specific piece in a *multi-file* torrent.
+ * files: ordered list of files with their lengths and absolute paths.
+ * globalOffset: offset in the "virtual concatenated" torrent stream.
+ * pieceLength: how many bytes to read and hash.
+ */
+export async function hashPieceMulti(
+    files: { path: string; length: number }[],
+    globalOffset: number,
+    pieceLength: number
+): Promise<string> {
+    const hash = crypto.createHash('sha1');
+    let remaining = pieceLength;
+    let offset = globalOffset;
+
+    // find which file contains the starting offset
+    let fileIndex = 0;
+    let cumulative = 0;
+    while (fileIndex < files.length && cumulative + files[fileIndex].length <= offset) {
+        cumulative += files[fileIndex].length;
+        fileIndex++;
+    }
+
+    if (fileIndex >= files.length) {
+        throw new Error(`Offset ${offset} beyond end of torrent`);
+    }
+
+    // now start reading sequentially across files
+    while (remaining > 0 && fileIndex < files.length) {
+        const f = files[fileIndex];
+        const filePath = f.path;
+        const fileOffset = offset - cumulative; // start point within this file
+        const readLength = Math.min(remaining, f.length - fileOffset);
+
+        const fh = await fs.open(filePath, 'r');
+        try {
+            const buffer = Buffer.alloc(readLength);
+            const { bytesRead } = await fh.read(buffer, 0, readLength, fileOffset);
+            hash.update(buffer.subarray(0, bytesRead));
+        } finally {
+            await fh.close();
+        }
+
+        remaining -= readLength;
+        offset += readLength;
+        cumulative += f.length;
+        fileIndex++;
+    }
+
+    return hash.digest('hex');
+}
+
+/**
  * Get cached piece hashes from memory or the DB.
  */
 export async function getCachedPieceHashes(fileHash: string, pieceLength: number, lastChecked: number): Promise<Map<number, string>> {

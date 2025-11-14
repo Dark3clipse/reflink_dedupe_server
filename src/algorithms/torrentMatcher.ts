@@ -48,7 +48,4 @@ type SlotCandidate = {
 
 export async function matchTorrentFiles(info: TorrentInfo): Promise<void> {
     logger.trace(`matchTorrentFiles`);
-    logger.trace(info.pieceLength);
-    logger.trace(info.files);
-    logger.trace(info.name);
 }
